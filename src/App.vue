@@ -17,7 +17,7 @@
 
     <section class="workspace" aria-label="ElfUI component playground">
       <aside class="file-panel">
-        <div class="panel-heading"><span>PROJECT</span><button type="button" title="New component file" @click="createFile">+</button></div>
+        <div class="panel-heading"><span>PROJECT</span><button type="button" title="New TypeScript file" @click="createFile">+</button></div>
         <div class="file-list">
           <template v-for="item in projectTreeItems" :key="item.id">
             <button
@@ -609,6 +609,7 @@ export const ${component} = defineHtml(html\`
   activeFileId.value = id;
   activePreset.value = undefined;
   activateFileModel(file);
+  startRename(file);
   compileNow();
 };
 

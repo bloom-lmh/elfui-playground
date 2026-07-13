@@ -11,7 +11,8 @@ inside the isolated preview.
 
 File names may include relative folders such as `components/Button.ts`. The
 project panel renders those paths as a collapsible tree and normalizes repeated
-path separators when a file is renamed.
+path separators when a file is renamed. Click **+** to immediately enter the
+path and name of a new TypeScript file.
 
 Use **Export** to save the entire workspace as `elfui-playground.json`, and
 **Import** to restore it later. Imported projects are validated before their
