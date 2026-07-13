@@ -18,6 +18,10 @@ Use **Export** to save the entire workspace as `elfui-playground.json`, and
 **Import** to restore it later. Imported projects are validated before their
 Monaco models and preview are replaced.
 
+Use **Download** to generate `elfui-playground-project.zip`: it contains every
+TypeScript file, a Vite setup with the ElfUI macro plugin, the selected entry
+module, and an `elfui-playground.json` snapshot for later re-import.
+
 By default, **Auto save** keeps the project state in the shareable URL as you
 edit. Turn it off when working with a large or temporary draft; **Copy link**
 still produces an up-to-date URL on demand. The preference is kept locally in
