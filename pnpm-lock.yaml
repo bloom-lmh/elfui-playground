@@ -14,6 +14,9 @@ importers:
       '@elfui/core':
         specifier: 0.1.0-beta.1
         version: 0.1.0-beta.1
+      '@elfui/reactivity':
+        specifier: 0.1.0-beta.1
+        version: 0.1.0-beta.1
       '@elfui/runtime':
         specifier: 0.1.0-beta.1
         version: 0.1.0-beta.1

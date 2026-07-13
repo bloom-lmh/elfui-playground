@@ -22,6 +22,10 @@ The **Entry** selector is independent from the file being edited. Use it to
 choose the module that runs in the preview; the choice is retained in shared
 links and exported workspace files.
 
+The browser preview supports the stable `@elfui/core` application API and the
+standalone `@elfui/reactivity` primitives. Both are available to Monaco and to
+the isolated runtime without a bundler configuration.
+
 Files run as separate browser ESM modules. Relative imports between project
 files resolve automatically, for example `import { Badge } from "./Badge"`
 will resolve `Badge.ts`. Monaco keeps project files as virtual TypeScript

@@ -7,6 +7,7 @@
 
 <script setup lang="ts">
 import * as core from "@elfui/core";
+import * as reactivity from "@elfui/reactivity";
 import * as runtime from "@elfui/runtime/internal";
 import { onBeforeUnmount, onMounted, ref } from "vue";
 
@@ -60,10 +61,12 @@ const rewriteImports = (
   source: string,
   resolveLocal: (specifier: string) => string
 ): string => source.replace(
-    /import\s*\{([^}]*)\}\s*from\s*["'](elfui|@elfui\/core|@elfui\/runtime\/internal)["'];?/g,
+    /import\s*\{([^}]*)\}\s*from\s*["'](elfui|@elfui\/core|@elfui\/reactivity|@elfui\/runtime\/internal)["'];?/g,
     (_, specifiers: string, moduleName: string) => {
       const namespace = moduleName === "@elfui/runtime/internal"
         ? "globalThis.__elfuiPlayground.runtime"
+        : moduleName === "@elfui/reactivity"
+          ? "globalThis.__elfuiPlayground.reactivity"
         : "globalThis.__elfuiPlayground.core";
       return bindingsFor(specifiers, namespace);
     }
@@ -82,8 +85,11 @@ const run = async ({ activeFileId, components, files, id }: PreviewRunMessage) =
     activeModuleUrls.forEach((url) => URL.revokeObjectURL(url));
     activeModuleUrls = [];
 
-    (globalThis as typeof globalThis & { __elfuiPlayground?: { core: typeof core; runtime: typeof runtime } }).__elfuiPlayground = {
+    (globalThis as typeof globalThis & {
+      __elfuiPlayground?: { core: typeof core; reactivity: typeof reactivity; runtime: typeof runtime }
+    }).__elfuiPlayground = {
       core,
+      reactivity,
       runtime
     };
 

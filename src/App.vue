@@ -312,6 +312,25 @@ const formatTypeScriptMessage = (message: string | { messageText: string; next?:
   return [message.messageText, ...details].join("\n");
 };
 
+const macroTemplateRanges = (source: string): Array<{ end: number; start: number }> => {
+  const ranges: Array<{ end: number; start: number }> = [];
+  const macro = /\bhtml\s*`/g;
+  for (let match = macro.exec(source); match; match = macro.exec(source)) {
+    const start = match.index;
+    let cursor = macro.lastIndex;
+    while (cursor < source.length) {
+      if (source[cursor] === "`" && source[cursor - 1] !== "\\") {
+        ranges.push({ end: cursor + 1, start });
+        cursor += 1;
+        break;
+      }
+      cursor += 1;
+    }
+    macro.lastIndex = cursor;
+  }
+  return ranges;
+};
+
 const collectTypeScriptDiagnostics = async (compileId: number): Promise<PlaygroundDiagnostic[]> => {
   try {
     syncProjectModels();
@@ -321,12 +340,18 @@ const collectTypeScriptDiagnostics = async (compileId: number): Promise<Playgrou
     const worker = await workerFactory(...models.map((model) => model.uri));
     const grouped = await Promise.all(files.value.map(async (file) => {
       const model = projectModel(file);
+      const templateRanges = macroTemplateRanges(file.source);
       const [syntactic, semantic] = await Promise.all([
         worker.getSyntacticDiagnostics(model.uri.toString()),
         worker.getSemanticDiagnostics(model.uri.toString())
       ]);
       return [...syntactic, ...semantic]
         .filter((diagnostic) => diagnostic.category === 0 || diagnostic.category === 1)
+        // Macro template contents are validated by @elfui/compiler. Monaco's raw
+        // TypeScript parser can mistake the embedded HTML for TS after a model swap.
+        .filter((diagnostic) => !templateRanges.some((range) =>
+          (diagnostic.start ?? 0) >= range.start && (diagnostic.start ?? 0) <= range.end
+        ))
         .map((diagnostic) => {
           const position = model.getPositionAt(diagnostic.start ?? 0);
           return {

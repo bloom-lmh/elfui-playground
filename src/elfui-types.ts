@@ -33,4 +33,23 @@ declare module "@elfui/core" {
   export function createApp(component: unknown): { mount(target: string | Element): Element; unmount(): void };
   export function registerComponents(...components: unknown[]): void;
 }
+
+declare module "@elfui/reactivity" {
+  export interface Ref<T> {
+    value: T;
+    peek(): T;
+    set(value: T): void;
+  }
+
+  export interface Computed<T> extends Readonly<Ref<T>> {}
+
+  export function useRef<T>(value: T): Ref<T>;
+  export function useReactive<T extends object>(value: T): T;
+  export function useShallowRef<T>(value: T): Ref<T>;
+  export function useShallowReactive<T extends object>(value: T): T;
+  export function useComputed<T>(getter: () => T): Computed<T>;
+  export function useEffect(effect: () => void | (() => void)): () => void;
+  export function watch<T>(source: Ref<T> | (() => T), callback: (value: T, previous: T | undefined) => void): () => void;
+  export function nextTick<T = void>(callback?: () => T): Promise<T>;
+}
 `;
