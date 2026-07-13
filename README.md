@@ -72,6 +72,13 @@ pnpm install
 pnpm dev
 ```
 
+## Deployment
+
+The repository is ready for a Vercel static-site project. Import
+`bloom-lmh/elfui-playground`, use the committed defaults, and publish it at a
+stable URL (for example, `elfui-playground.vercel.app`). That published URL is
+the target for the official documentation's Playground entry point.
+
 Open `http://localhost:5173`. The editor runs on `localhost`; its sandbox uses
 `127.0.0.1` on the same port. This keeps user-authored code on a separate
 origin during local development.
