@@ -18,6 +18,10 @@ exports a macro component and `main.ts` imports it and calls
 `createApp(App).mount("#app")`. Ordinary TypeScript entry modules are executed
 without being treated as macro components.
 
+The **Entry** selector is independent from the file being edited. Use it to
+choose the module that runs in the preview; the choice is retained in shared
+links and exported workspace files.
+
 Files run as separate browser ESM modules. Relative imports between project
 files resolve automatically, for example `import { Badge } from "./Badge"`
 will resolve `Badge.ts`. Monaco keeps project files as virtual TypeScript

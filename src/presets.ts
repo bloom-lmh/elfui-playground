@@ -4,6 +4,7 @@ export interface PlaygroundPreset {
   id: "counter" | "toggle" | "application";
   project?: {
     activeFileId: string;
+    entryFileId: string;
     files: PlaygroundFile[];
   };
   source: string;
@@ -43,6 +44,7 @@ export const playgroundPresets: PlaygroundPreset[] = [
     source: applicationFiles[0].source,
     project: {
       activeFileId: "main",
+      entryFileId: "main",
       files: applicationFiles
     }
   },

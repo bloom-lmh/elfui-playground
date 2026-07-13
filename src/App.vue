@@ -67,7 +67,14 @@
       <section class="editor-area">
         <div class="tabbar">
           <span class="tab active"><i></i> {{ activeFile?.name }}</span>
-          <span class="compile-state" :class="statusKind">{{ statusLabel }}</span>
+          <div class="editor-actions">
+            <label class="entry-select">Entry
+              <select v-model="entryFileId" aria-label="Preview entry file" @change="compileNow">
+                <option v-for="file in files" :key="file.id" :value="file.id">{{ file.name }}</option>
+              </select>
+            </label>
+            <span class="compile-state" :class="statusKind">{{ statusLabel }}</span>
+          </div>
         </div>
         <div ref="editorRoot" class="editor-root"></div>
       </section>
@@ -131,6 +138,7 @@ import { playgroundPresets } from "./presets";
 
 type EncodedState = {
   activeFileId?: string;
+  entryFileId?: string;
   files?: PlaygroundFile[];
   version?: 1;
   // Supports links made by the former single-file Playground.
@@ -143,11 +151,15 @@ const initialFile = (source = playgroundPresets.find((preset) => preset.id === "
   source
 });
 
-const initialProject = (): { activeFileId: string; files: PlaygroundFile[] } => {
+const initialProject = (): { activeFileId: string; entryFileId: string; files: PlaygroundFile[] } => {
   const application = playgroundPresets.find((preset) => preset.id === "application")?.project;
   return application
-    ? { activeFileId: application.activeFileId, files: application.files.map((file) => ({ ...file })) }
-    : { activeFileId: "app", files: [initialFile()] };
+    ? {
+        activeFileId: application.activeFileId,
+        entryFileId: application.entryFileId,
+        files: application.files.map((file) => ({ ...file }))
+      }
+    : { activeFileId: "app", entryFileId: "app", files: [initialFile()] };
 };
 
 const normalizeProjectPath = (value: string) => value.replace(/\\/g, "/").replace(/^\.\//, "");
@@ -211,6 +223,7 @@ const compiledFiles = ref<CompiledPlaygroundFile[]>([]);
 const startingProject = initialProject();
 const files = ref<PlaygroundFile[]>(startingProject.files);
 const activeFileId = ref(startingProject.activeFileId);
+const entryFileId = ref(startingProject.entryFileId);
 const activeFile = computed(() => files.value.find((file) => file.id === activeFileId.value));
 const editingFileId = ref<string>();
 const fileNameDraft = ref("");
@@ -238,7 +251,7 @@ const encodeState = (state: EncodedState): string => {
   return btoa(encodeURIComponent(json).replace(/%([0-9A-F]{2})/g, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16))));
 };
 
-type ProjectState = Required<Pick<EncodedState, "activeFileId" | "files">>;
+type ProjectState = Required<Pick<EncodedState, "activeFileId" | "entryFileId" | "files">>;
 
 const parseProjectState = (state: EncodedState): ProjectState | undefined => {
   if (!Array.isArray(state.files) || state.files.length === 0 || state.files.length > 64) return undefined;
@@ -253,7 +266,10 @@ const parseProjectState = (state: EncodedState): ProjectState | undefined => {
   const activeFileId = state.files.some((file) => file.id === state.activeFileId)
     ? state.activeFileId!
     : state.files[0].id;
-  return { activeFileId, files: state.files.map((file) => ({ ...file })) };
+  const entryFileId = state.files.some((file) => file.id === state.entryFileId)
+    ? state.entryFileId!
+    : activeFileId;
+  return { activeFileId, entryFileId, files: state.files.map((file) => ({ ...file })) };
 };
 
 const decodeState = (): EncodedState | undefined => {
@@ -332,7 +348,12 @@ const collectTypeScriptDiagnostics = async (compileId: number): Promise<Playgrou
 
 const syncHash = () => {
   const url = new URL(window.location.href);
-  url.hash = new URLSearchParams({ code: encodeState({ activeFileId: activeFileId.value, files: files.value, version: 1 }) }).toString();
+  url.hash = new URLSearchParams({ code: encodeState({
+    activeFileId: activeFileId.value,
+    entryFileId: entryFileId.value,
+    files: files.value,
+    version: 1
+  }) }).toString();
   window.history.replaceState({}, "", url);
 };
 
@@ -341,6 +362,7 @@ const replaceProject = (project: ProjectState) => {
   editorModels.clear();
   files.value = project.files;
   activeFileId.value = project.activeFileId;
+  entryFileId.value = project.entryFileId;
   syncProjectModels();
   activePreset.value = undefined;
   fileActionError.value = "";
@@ -390,7 +412,7 @@ const compileNow = () => {
   updateEditorMarkers();
   syncHash();
   compiler.postMessage({
-    activeFileId: activeFileId.value,
+    activeFileId: entryFileId.value,
     files: files.value.map(({ id, name, source }) => ({ id, name, source })),
     id: requestId,
     type: "compile"
@@ -404,7 +426,6 @@ const openFile = (id: string) => {
   activePreset.value = undefined;
   activateFileModel(file);
   updateEditorMarkers();
-  compileNow();
 };
 
 const startRename = (file: PlaygroundFile) => {
@@ -502,6 +523,7 @@ const deleteFile = (id: string) => {
   editorModels.get(id)?.dispose();
   editorModels.delete(id);
   files.value = remaining;
+  if (entryFileId.value === id) entryFileId.value = remaining[Math.min(index, remaining.length - 1)].id;
   if (activeFileId.value === id) {
     const next = remaining[Math.min(index, remaining.length - 1)];
     activeFileId.value = next.id;
@@ -521,6 +543,7 @@ const loadPreset = (id: (typeof playgroundPresets)[number]["id"]) => {
     ? preset.project.files.map((file) => ({ ...file }))
     : [initialFile(preset.source)];
   activeFileId.value = preset.project?.activeFileId ?? files.value[0].id;
+  entryFileId.value = preset.project?.entryFileId ?? activeFileId.value;
   syncProjectModels();
   const selected = files.value.find((file) => file.id === activeFileId.value) ?? files.value[0];
   activateFileModel(selected);
@@ -549,7 +572,7 @@ const sendPreview = () => {
   if (!pendingPreview?.files || !pendingPreview.components) return;
   previewFrame.value?.contentWindow?.postMessage(
     {
-      activeFileId: activeFileId.value,
+      activeFileId: entryFileId.value,
       components: pendingPreview.components,
       files: pendingPreview.files,
       id: pendingPreview.id,
@@ -583,7 +606,12 @@ const copyShareLink = async () => {
 };
 
 const exportProject = () => {
-  const project = { activeFileId: activeFileId.value, files: files.value, version: 1 } satisfies EncodedState;
+  const project = {
+    activeFileId: activeFileId.value,
+    entryFileId: entryFileId.value,
+    files: files.value,
+    version: 1
+  } satisfies EncodedState;
   const url = URL.createObjectURL(new Blob([JSON.stringify(project, null, 2)], { type: "application/json" }));
   const link = document.createElement("a");
   link.href = url;
@@ -670,6 +698,11 @@ onMounted(() => {
     : shared?.source
       ? files.value[0].id
       : fallbackProject.activeFileId;
+  entryFileId.value = files.value.some((file) => file.id === shared?.entryFileId)
+    ? shared!.entryFileId!
+    : shared?.source
+      ? activeFileId.value
+      : fallbackProject.entryFileId;
   const restoredFile = files.value.find((file) => file.id === activeFileId.value) ?? files.value[0];
   activePreset.value = !shared
     ? "application"
@@ -741,6 +774,10 @@ onBeforeUnmount(() => {
 .file-panel-note { margin: auto 14px 16px; color: #59758a; font-size: 11px; line-height: 1.55; }
 .editor-area { display: grid; grid-template-rows: 43px minmax(0, 1fr); }
 .tabbar { justify-content: space-between; padding-left: 18px; }
+.editor-actions { display: flex; align-items: center; gap: 10px; }
+.entry-select { display: flex; align-items: center; gap: 7px; color: #6f8ca1; font: 750 10px/1 Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .06em; text-transform: uppercase; }
+.entry-select select { max-width: 150px; min-height: 26px; padding: 0 23px 0 8px; border: 1px solid #254158; border-radius: 4px; outline: 0; color: #b8d4e4; background: #0a1a2b; font: 650 11px/1 "JetBrains Mono", ui-monospace, monospace; }
+.entry-select select:focus { border-color: #45d8cf; }
 .tab { color: #c0d7e6; font: 650 12px/1 "JetBrains Mono", ui-monospace, monospace; }
 .tab i { display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 2px; background: #49d9ca; }
 .compile-state { padding: 5px 8px; border-radius: 999px; font: 750 10px/1 Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .04em; }
