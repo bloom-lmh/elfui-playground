@@ -29,6 +29,18 @@ const toDiagnostic = (diagnostic: {
   severity: diagnostic.severity
 });
 
+const errorLocation = (source: string, error: unknown): Pick<PlaygroundDiagnostic, "column" | "line"> => {
+  const loc = (error as { loc?: { start?: { offset?: number } } } | undefined)?.loc?.start;
+  if (typeof loc?.offset !== "number") return {};
+  const templateStart = source.indexOf("html`");
+  if (templateStart < 0) return {};
+  const offset = templateStart + "html`".length + loc.offset;
+  const before = source.slice(0, offset);
+  const line = before.split("\n").length;
+  const column = before.length - before.lastIndexOf("\n");
+  return { column, line };
+};
+
 scope.onmessage = ({ data }: MessageEvent<CompileRequest>) => {
   if (data.type !== "compile") return;
 
@@ -67,6 +79,7 @@ scope.onmessage = ({ data }: MessageEvent<CompileRequest>) => {
     } catch (error) {
       diagnostics.push({
         code: "ELF_PLAYGROUND_COMPILE",
+        ...errorLocation(file.source, error),
         filename: file.name,
         message: error instanceof Error ? error.message : String(error),
         severity: "error"

@@ -53,11 +53,16 @@
 
       <section class="preview-area">
         <div class="preview-toolbar">
-          <div><span class="live-dot"></span> Isolated preview</div>
+          <div class="output-tabs" role="tablist" aria-label="Playground output">
+            <button :class="{ active: outputMode === 'preview' }" type="button" role="tab" @click="outputMode = 'preview'">
+              <span class="live-dot"></span> Preview
+            </button>
+            <button :class="{ active: outputMode === 'compiled' }" type="button" role="tab" @click="outputMode = 'compiled'">Compiled JS</button>
+          </div>
           <span>{{ previewOrigin ? previewOrigin.replace(/^https?:\/\//, "") : "not configured" }}</span>
         </div>
         <iframe
-          v-if="previewOrigin"
+          v-if="outputMode === 'preview' && previewOrigin"
           :key="previewKey"
           ref="previewFrame"
           class="preview-frame"
@@ -65,6 +70,7 @@
           sandbox="allow-scripts allow-same-origin"
           title="ElfUI component preview"
         ></iframe>
+        <pre v-else-if="outputMode === 'compiled'" class="compiled-output"><code>{{ compiledSource || "Compile the project to inspect the generated JavaScript." }}</code></pre>
         <div v-else class="preview-unavailable">Configure an isolated preview origin to run code.</div>
       </section>
     </section>
@@ -75,7 +81,7 @@
         <h1>{{ diagnostics.length ? "Diagnostics" : "Ready" }}</h1>
       </div>
       <ul v-if="diagnostics.length">
-        <li v-for="diagnostic in diagnostics" :key="`${diagnostic.code}-${diagnostic.line}-${diagnostic.column}`">
+        <li v-for="diagnostic in diagnostics" :key="`${diagnostic.filename}-${diagnostic.code}-${diagnostic.line}-${diagnostic.column}`" @click="showDiagnostic(diagnostic)">
           <b>{{ diagnostic.filename ? `${diagnostic.filename}: ${diagnostic.code}` : diagnostic.code }}</b>
           <span v-if="diagnostic.line">{{ diagnostic.line }}:{{ diagnostic.column ?? 1 }}</span>
           <p>{{ diagnostic.message }}</p>
@@ -92,7 +98,13 @@ import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import TypeScriptWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 
-import type { CompileResponse, PlaygroundDiagnostic, PlaygroundFile, PreviewStatusMessage } from "./protocol";
+import type {
+  CompiledPlaygroundFile,
+  CompileResponse,
+  PlaygroundDiagnostic,
+  PlaygroundFile,
+  PreviewStatusMessage
+} from "./protocol";
 import { playgroundPresets } from "./presets";
 
 type EncodedState = {
@@ -121,6 +133,8 @@ const previewOrigin = ref("");
 const previewKey = ref(0);
 const statusKind = ref<"compiling" | "error" | "ready">("compiling");
 const shareLabel = ref("Copy link");
+const outputMode = ref<"preview" | "compiled">("preview");
+const compiledFiles = ref<CompiledPlaygroundFile[]>([]);
 const files = ref<PlaygroundFile[]>([initialFile()]);
 const activeFileId = ref(files.value[0].id);
 const activeFile = computed(() => files.value.find((file) => file.id === activeFileId.value));
@@ -133,6 +147,7 @@ let pendingPreview: Extract<CompileResponse, { files?: unknown }> | undefined;
 let syncingEditor = false;
 
 const previewUrl = computed(() => `${previewOrigin.value}/preview?run=${previewKey.value}`);
+const compiledSource = computed(() => compiledFiles.value.find((file) => file.id === activeFileId.value)?.code ?? "");
 const statusLabel = computed(() => {
   if (statusKind.value === "compiling") return "Compiling";
   if (statusKind.value === "error") return "Error";
@@ -177,9 +192,30 @@ const scheduleCompile = () => {
   debounce = window.setTimeout(compileNow, 380);
 };
 
+const updateEditorMarkers = () => {
+  const model = editor?.getModel();
+  const file = activeFile.value;
+  if (!model || !file) return;
+  monaco.editor.setModelMarkers(
+    model,
+    "elfui-playground",
+    diagnostics.value
+      .filter((diagnostic) => diagnostic.filename === file.name && diagnostic.line)
+      .map((diagnostic) => ({
+        endColumn: diagnostic.column ? diagnostic.column + 1 : 2,
+        endLineNumber: diagnostic.line!,
+        message: diagnostic.message,
+        severity: diagnostic.severity === "warning" ? monaco.MarkerSeverity.Warning : monaco.MarkerSeverity.Error,
+        startColumn: diagnostic.column ?? 1,
+        startLineNumber: diagnostic.line!
+      }))
+  );
+};
+
 const reportFailure = (message: string) => {
   statusKind.value = "error";
   diagnostics.value = [{ code: "ELF_PLAYGROUND_WORKER", message, severity: "error" }];
+  updateEditorMarkers();
 };
 
 const compileNow = () => {
@@ -187,6 +223,8 @@ const compileNow = () => {
   requestId += 1;
   statusKind.value = "compiling";
   diagnostics.value = [];
+  compiledFiles.value = [];
+  updateEditorMarkers();
   syncHash();
   compiler.postMessage({
     activeFileId: activeFileId.value,
@@ -209,7 +247,23 @@ const openFile = (id: string) => {
   activeFileId.value = id;
   activePreset.value = undefined;
   setEditorValue(file.source);
+  updateEditorMarkers();
   compileNow();
+};
+
+const showDiagnostic = async (diagnostic: PlaygroundDiagnostic) => {
+  const file = diagnostic.filename ? files.value.find((candidate) => candidate.name === diagnostic.filename) : undefined;
+  if (file && file.id !== activeFileId.value) {
+    activeFileId.value = file.id;
+    activePreset.value = undefined;
+    setEditorValue(file.source);
+    await nextTick();
+  }
+  if (!diagnostic.line || !editor) return;
+  const column = diagnostic.column ?? 1;
+  editor.revealPositionInCenter({ column, lineNumber: diagnostic.line });
+  editor.setPosition({ column, lineNumber: diagnostic.line });
+  editor.focus();
 };
 
 const createFile = () => {
@@ -265,10 +319,12 @@ const loadPreset = (id: (typeof playgroundPresets)[number]["id"]) => {
 const receiveCompile = async ({ data }: MessageEvent<CompileResponse>) => {
   if (data.type !== "compiled" || data.id !== requestId) return;
   diagnostics.value = data.diagnostics;
+  updateEditorMarkers();
   if (!data.files || !data.components || data.diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
     statusKind.value = "error";
     return;
   }
+  compiledFiles.value = data.files;
   pendingPreview = data;
   previewKey.value += 1;
   await nextTick();
@@ -418,15 +474,21 @@ onBeforeUnmount(() => {
 .editor-root { min-height: 0; }
 .preview-area { display: grid; grid-template-rows: 43px minmax(0, 1fr); border-right: 0; background: #091726; }
 .preview-toolbar { justify-content: space-between; color: #a2bccd; letter-spacing: 0; }
+.output-tabs { display: flex; align-items: stretch; align-self: stretch; margin-left: -14px; }
+.output-tabs button { padding: 0 14px; border: 0; border-right: 1px solid #193044; color: #7896aa; background: transparent; font: 700 11px/1 Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
+.output-tabs button.active { color: #e8f8ff; background: #0d2031; box-shadow: inset 0 -2px #45d8cf; }
+.output-tabs .live-dot { margin-right: 6px; }
 .preview-toolbar > span { color: #648299; font: 600 10px/1 "JetBrains Mono", ui-monospace, monospace; }
 .live-dot { display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 999px; background: #49d9ca; box-shadow: 0 0 12px #49d9ca; }
 .preview-frame { width: 100%; height: 100%; border: 0; background: #08111f; }
+.compiled-output { min-width: 0; margin: 0; padding: 18px 20px; overflow: auto; color: #c6d9e5; background: #07111f; font: 13px/1.65 "JetBrains Mono", ui-monospace, monospace; tab-size: 2; white-space: pre; }
 .preview-unavailable { display: grid; place-items: center; padding: 30px; color: #ffafba; text-align: center; font-size: 13px; line-height: 1.6; }
 .diagnostics { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 28px; min-height: 132px; padding: 23px 26px; border-top: 1px solid #193044; background: #081522; }
 .diagnostics-heading p { margin: 0 0 9px; color: #49d9ca; font: 800 10px/1 Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .13em; }
 .diagnostics-heading h1 { margin: 0; color: #e8f7ff; font-size: 20px; }
 .diagnostics ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.diagnostics li { display: grid; grid-template-columns: max-content max-content minmax(0, 1fr); gap: 10px; align-items: start; padding: 9px 11px; border: 1px solid #572535; border-radius: 5px; color: #ffb1bb; background: #3a172333; font-size: 12px; }
+.diagnostics li { display: grid; grid-template-columns: max-content max-content minmax(0, 1fr); gap: 10px; align-items: start; padding: 9px 11px; border: 1px solid #572535; border-radius: 5px; color: #ffb1bb; background: #3a172333; font-size: 12px; cursor: pointer; }
+.diagnostics li:hover { border-color: #a95064; background: #51203144; }
 .diagnostics li b, .diagnostics li span { font: 700 11px/1.5 "JetBrains Mono", ui-monospace, monospace; }
 .diagnostics li p, .diagnostics-empty { margin: 0; color: #91aabd; line-height: 1.55; }
 @media (max-width: 980px) { .workspace { grid-template-columns: 190px minmax(0, 1fr); } .preview-area { grid-column: 2; min-height: 420px; border-top: 1px solid #193044; } .diagnostics { grid-template-columns: 1fr; gap: 16px; } }
