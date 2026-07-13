@@ -16,11 +16,28 @@
         <div class="panel-heading"><span>PROJECT</span><button type="button" title="New component file" @click="createFile">+</button></div>
         <div class="file-list">
           <div v-for="file in files" :key="file.id" class="file-entry">
-            <button :class="['file-row', { active: activeFileId === file.id }]" type="button" @click="openFile(file.id)">
+            <button
+              v-if="editingFileId !== file.id"
+              :class="['file-row', { active: activeFileId === file.id }]"
+              type="button"
+              @click="openFile(file.id)"
+              @dblclick="startRename(file)"
+            >
               <span class="file-mark">TS</span>{{ file.name }}
             </button>
+            <input
+              v-else
+              v-model="fileNameDraft"
+              ref="renameInputs"
+              class="rename-file"
+              :aria-label="`Rename ${file.name}`"
+              @blur="commitRename(file.id)"
+              @keydown.enter.prevent="commitRename(file.id)"
+              @keydown.esc.prevent="cancelRename"
+            />
+            <button v-if="editingFileId !== file.id" type="button" class="rename-file-button" title="Rename file" @click="startRename(file)">Rename</button>
             <button
-              v-if="files.length > 1"
+              v-if="files.length > 1 && editingFileId !== file.id"
               type="button"
               class="delete-file"
               :title="`Delete ${file.name}`"
@@ -28,6 +45,7 @@
             >×</button>
           </div>
         </div>
+        <p v-if="fileActionError" class="file-action-error">{{ fileActionError }}</p>
         <div class="preset-section">
           <p>STARTERS</p>
           <button
@@ -139,6 +157,10 @@ const compiledFiles = ref<CompiledPlaygroundFile[]>([]);
 const files = ref<PlaygroundFile[]>([initialFile()]);
 const activeFileId = ref(files.value[0].id);
 const activeFile = computed(() => files.value.find((file) => file.id === activeFileId.value));
+const editingFileId = ref<string>();
+const fileNameDraft = ref("");
+const fileActionError = ref("");
+const renameInputs = ref<HTMLInputElement[]>([]);
 
 let editor: monaco.editor.IStandaloneCodeEditor | undefined;
 let compiler: Worker | undefined;
@@ -256,6 +278,47 @@ const openFile = (id: string) => {
   activePreset.value = undefined;
   activateFileModel(file);
   updateEditorMarkers();
+  compileNow();
+};
+
+const startRename = (file: PlaygroundFile) => {
+  fileActionError.value = "";
+  editingFileId.value = file.id;
+  fileNameDraft.value = file.name;
+  void nextTick(() => renameInputs.value[0]?.focus());
+};
+
+const cancelRename = () => {
+  editingFileId.value = undefined;
+  fileNameDraft.value = "";
+};
+
+const commitRename = (id: string) => {
+  // Pressing Enter moves focus away from the input, which subsequently emits blur.
+  // Ignore that second event once the successful commit has closed rename mode.
+  if (editingFileId.value !== id) return;
+
+  const current = files.value.find((file) => file.id === id);
+  if (!current) return cancelRename();
+  const rawName = fileNameDraft.value.trim().replace(/^\.\/+/, "");
+  const name = rawName.endsWith(".ts") ? rawName : `${rawName}.ts`;
+  if (!rawName || name.includes("..") || name.startsWith("/")) {
+    fileActionError.value = "Use a relative TypeScript filename without parent traversal.";
+    return;
+  }
+  if (files.value.some((file) => file.id !== id && file.name === name)) {
+    fileActionError.value = `A file named ${name} already exists.`;
+    return;
+  }
+  if (name === current.name) return cancelRename();
+
+  const renamed = { ...current, name };
+  editorModels.get(id)?.dispose();
+  editorModels.delete(id);
+  files.value = files.value.map((file) => file.id === id ? renamed : file);
+  if (activeFileId.value === id) activateFileModel(renamed);
+  fileActionError.value = "";
+  cancelRename();
   compileNow();
 };
 
@@ -481,8 +544,12 @@ onBeforeUnmount(() => {
 .file-row { display: flex; flex: 1; align-items: center; gap: 8px; width: 100%; min-width: 0; min-height: 35px; padding: 0 14px; border: 0; border-left: 2px solid transparent; color: #9fb8ca; background: transparent; text-align: left; font: 650 12px/1 "JetBrains Mono", ui-monospace, monospace; }
 .file-row.active { border-left-color: #45d8cf; color: #effaff; background: #0e2233; }
 .file-mark { color: #49d9ca; font-size: 9px; font-weight: 900; }
+.rename-file { flex: 1; min-width: 0; margin: 4px 6px; padding: 0 7px; border: 1px solid #45d8cf; border-radius: 3px; outline: 0; color: #effaff; background: #0e2233; font: 650 12px/1 "JetBrains Mono", ui-monospace, monospace; }
+.rename-file-button { border: 0; padding: 0 6px; color: #5c7b91; background: transparent; font: 700 9px/1 Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; opacity: .55; text-transform: uppercase; }
+.file-entry:hover .rename-file-button { opacity: 1; color: #8ec7e0; }
 .delete-file { width: 31px; border: 0; color: #5c7b91; background: transparent; font-size: 16px; cursor: pointer; }
 .delete-file:hover { color: #ff9daa; background: #3a172333; }
+.file-action-error { margin: 8px 14px 0; color: #ff9daa; font-size: 11px; line-height: 1.45; }
 .preset-section { padding: 24px 12px; }
 .preset-section p { margin: 0 0 10px; color: #547187; font: 750 10px/1 Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .12em; }
 .preset-button { display: block; width: 100%; margin-bottom: 5px; padding: 9px 10px; border: 1px solid transparent; border-radius: 4px; color: #91aabd; background: transparent; text-align: left; font: 650 12px/1 Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
