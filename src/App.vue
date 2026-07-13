@@ -126,18 +126,31 @@
             <button :class="{ active: outputMode === 'console' }" type="button" role="tab" @click="outputMode = 'console'">Console{{ previewLogs.length ? ` (${previewLogs.length})` : "" }}</button>
           </div>
           <button v-if="outputMode === 'console' && previewLogs.length" type="button" class="console-clear" @click="previewLogs = []">Clear</button>
-          <span v-else>{{ previewOrigin ? previewOrigin.replace(/^https?:\/\//, "") : "not configured" }}</span>
+          <div v-else class="preview-toolbar-actions">
+            <label v-if="outputMode === 'preview'" class="preview-viewport">Viewport
+              <select v-model="previewViewport" aria-label="Preview viewport">
+                <option value="responsive">Responsive</option>
+                <option value="tablet">Tablet · 768px</option>
+                <option value="mobile">Mobile · 390px</option>
+              </select>
+            </label>
+            <span>{{ previewOrigin ? previewOrigin.replace(/^https?:\/\//, "") : "not configured" }}</span>
+          </div>
         </div>
-        <iframe
+        <div
           v-if="previewOrigin"
           v-show="outputMode === 'preview'"
-          :key="previewKey"
-          ref="previewFrame"
-          class="preview-frame"
-          :src="previewUrl"
-          sandbox="allow-scripts allow-same-origin"
-          title="ElfUI component preview"
-        ></iframe>
+          :class="['preview-stage', `viewport-${previewViewport}`]"
+        >
+          <iframe
+            :key="previewKey"
+            ref="previewFrame"
+            class="preview-frame"
+            :src="previewUrl"
+            sandbox="allow-scripts allow-same-origin"
+            title="ElfUI component preview"
+          ></iframe>
+        </div>
         <pre v-if="outputMode === 'compiled'" class="compiled-output"><code>{{ compiledSource || "Compile the project to inspect the generated JavaScript." }}</code></pre>
         <ol v-else-if="outputMode === 'console'" class="console-output" aria-label="Preview console">
           <li v-for="(entry, index) in previewLogs" :key="`${entry.id}-${index}`" :class="entry.level">
@@ -203,6 +216,7 @@ type ProjectTreeItem =
   | { depth: number; file: PlaygroundFile; id: string; kind: "file" };
 
 type PreviewLogEntry = { id: number; level: PreviewLogLevel; message: string };
+type PreviewViewport = "responsive" | "tablet" | "mobile";
 
 type ProjectTreeFolder = {
   files: PlaygroundFile[];
@@ -333,6 +347,7 @@ const downloadLabel = ref("Download");
 const importLabel = ref("Import");
 const outputMode = ref<"preview" | "compiled" | "console">("preview");
 const previewLogs = ref<PreviewLogEntry[]>([]);
+const previewViewport = ref<PreviewViewport>("responsive");
 const compiledFiles = ref<CompiledPlaygroundFile[]>([]);
 const startingProject = initialProject();
 const files = ref<PlaygroundFile[]>(startingProject.files);
@@ -1225,11 +1240,18 @@ onBeforeUnmount(() => {
 .output-tabs button { padding: 0 14px; border: 0; border-right: 1px solid #193044; color: #7896aa; background: transparent; font: 700 11px/1 Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
 .output-tabs button.active { color: #e8f8ff; background: #0d2031; box-shadow: inset 0 -2px #45d8cf; }
 .output-tabs .live-dot { margin-right: 6px; }
+.preview-toolbar-actions { display: flex; align-items: center; min-width: 0; gap: 10px; }
+.preview-viewport { display: flex; align-items: center; gap: 5px; color: #7292a7; font: 700 10px/1 Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .05em; text-transform: uppercase; }
+.preview-viewport select { max-width: 122px; padding: 3px 18px 3px 5px; border: 1px solid #29465c; border-radius: 4px; outline: 0; color: #b9d2e0; background: #0a1a28; font: 600 10px/1 Inter, ui-sans-serif, system-ui, sans-serif; }
 .preview-toolbar > span { color: #648299; font: 600 10px/1 "JetBrains Mono", ui-monospace, monospace; }
+.preview-toolbar-actions > span { overflow: hidden; color: #648299; font: 600 10px/1 "JetBrains Mono", ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .console-clear { margin-left: auto; border: 0; color: #77acc5; background: transparent; font: 700 11px/1 Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
 .console-clear:hover { color: #e0f5ff; }
 .live-dot { display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 999px; background: #49d9ca; box-shadow: 0 0 12px #49d9ca; }
-.preview-frame { width: 100%; height: 100%; border: 0; background: #08111f; }
+.preview-stage { display: flex; min-width: 0; min-height: 0; justify-content: center; overflow: auto; background: #06111d; }
+.preview-frame { flex: 0 0 auto; width: 100%; height: 100%; border: 0; background: #08111f; }
+.viewport-tablet .preview-frame { width: 768px; }
+.viewport-mobile .preview-frame { width: 390px; }
 .compiled-output { min-width: 0; margin: 0; padding: 18px 20px; overflow: auto; color: #c6d9e5; background: #07111f; font: 13px/1.65 "JetBrains Mono", ui-monospace, monospace; tab-size: 2; white-space: pre; }
 .console-output { display: grid; align-content: start; gap: 0; min-width: 0; margin: 0; padding: 10px 0; overflow: auto; color: #c6d9e5; background: #07111f; list-style: none; font: 12px/1.55 "JetBrains Mono", ui-monospace, monospace; }
 .console-output li { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 12px; padding: 7px 18px; border-bottom: 1px solid #19304488; }
@@ -1283,10 +1305,14 @@ onBeforeUnmount(() => {
 .light .entry-select select { border-color: #b8cedc; color: #34566e; background: #fff; }
 .light .tab { color: #34566e; }
 .light .preview-toolbar > span { color: #648096; }
+.light .preview-toolbar-actions > span { color: #648096; }
+.light .preview-viewport { color: #5c7c91; }
+.light .preview-viewport select { border-color: #b8cedc; color: #36586f; background: #f5f9fc; }
 .light .console-clear { color: #547084; }
 .light .console-clear:hover { color: #173b53; }
 .light .output-tabs button { border-color: #cbdbe5; color: #547084; }
 .light .output-tabs button.active { color: #173b53; background: #e5f0f5; }
+.light .preview-stage { background: #eaf2f6; }
 .light .preview-frame { background: #f8fbfd; }
 .light .compiled-output { color: #25465e; background: #f8fbfd; }
 .light .console-output { color: #25465e; background: #f8fbfd; }
@@ -1301,5 +1327,5 @@ onBeforeUnmount(() => {
 .light .diagnostics li:hover { border-color: #d46c7e; background: #ffe7eb; }
 .light .diagnostics li p, .light .diagnostics-empty { color: #526f83; }
 @media (max-width: 980px) { .workspace { grid-template-columns: 190px minmax(0, 1fr); } .preview-area { grid-column: 2; min-height: 420px; border-top: 1px solid #193044; } .diagnostics { grid-template-columns: 1fr; gap: 16px; } }
-@media (max-width: 680px) { .topbar { padding: 0 14px; } .brand span, .docs-link { display: none; } .workspace { display: block; } .file-panel { min-height: 150px; border-bottom: 1px solid #193044; } .file-panel-note { display: none; } .editor-area, .preview-area { min-height: 430px; border-bottom: 1px solid #193044; } .diagnostics { padding: 20px 16px; } .diagnostics li { grid-template-columns: 1fr; gap: 4px; } }
+@media (max-width: 680px) { .topbar { padding: 0 14px; } .brand span, .docs-link { display: none; } .preview-toolbar-actions > span { display: none; } .workspace { display: block; } .file-panel { min-height: 150px; border-bottom: 1px solid #193044; } .file-panel-note { display: none; } .editor-area, .preview-area { min-height: 430px; border-bottom: 1px solid #193044; } .diagnostics { padding: 20px 16px; } .diagnostics li { grid-template-columns: 1fr; gap: 4px; } }
 </style>

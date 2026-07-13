@@ -54,6 +54,10 @@ The **Console** output tab captures `console.log`, `console.info`,
 `console.warn`, `console.error`, and unhandled preview rejections. Entries are
 scoped to the latest run, so stale iframe output cannot obscure current errors.
 
+Use the **Viewport** selector above Preview to test responsive layouts at the
+available panel width, 768px tablet, or 390px mobile width. Switching a viewport
+does not restart the running project.
+
 The browser preview supports the stable `@elfui/core` application API and the
 standalone `@elfui/reactivity` primitives. Both are available to Monaco and to
 the isolated runtime without a bundler configuration.
