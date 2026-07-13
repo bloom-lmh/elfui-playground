@@ -4,6 +4,9 @@
       <a class="brand" href="/" aria-label="ElfUI Playground home">ElfUI<span>Playground</span></a>
       <div class="topbar-actions">
         <button type="button" class="quiet-button" @click="copyShareLink">{{ shareLabel }}</button>
+        <button type="button" class="quiet-button" @click="exportProject">{{ exportLabel }}</button>
+        <button type="button" class="quiet-button" @click="importInput?.click()">{{ importLabel }}</button>
+        <input ref="importInput" hidden type="file" accept="application/json,.json" @change="importProject" />
         <a class="quiet-button docs-link" href="https://github.com/bloom-lmh/elfui-docs">Documentation</a>
         <button type="button" class="run-button" @click="compileNow">
           <span aria-hidden="true">&#9654;</span> Run
@@ -129,6 +132,7 @@ import { playgroundPresets } from "./presets";
 type EncodedState = {
   activeFileId?: string;
   files?: PlaygroundFile[];
+  version?: 1;
   // Supports links made by the former single-file Playground.
   source?: string;
 };
@@ -200,6 +204,8 @@ const previewOrigin = ref("");
 const previewKey = ref(0);
 const statusKind = ref<"compiling" | "error" | "ready">("compiling");
 const shareLabel = ref("Copy link");
+const exportLabel = ref("Export");
+const importLabel = ref("Import");
 const outputMode = ref<"preview" | "compiled">("preview");
 const compiledFiles = ref<CompiledPlaygroundFile[]>([]);
 const startingProject = initialProject();
@@ -210,6 +216,7 @@ const editingFileId = ref<string>();
 const fileNameDraft = ref("");
 const fileActionError = ref("");
 const renameInputs = ref<HTMLInputElement[]>([]);
+const importInput = ref<HTMLInputElement | null>(null);
 
 let editor: monaco.editor.IStandaloneCodeEditor | undefined;
 let compiler: Worker | undefined;
@@ -231,20 +238,32 @@ const encodeState = (state: EncodedState): string => {
   return btoa(encodeURIComponent(json).replace(/%([0-9A-F]{2})/g, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16))));
 };
 
+type ProjectState = Required<Pick<EncodedState, "activeFileId" | "files">>;
+
+const parseProjectState = (state: EncodedState): ProjectState | undefined => {
+  if (!Array.isArray(state.files) || state.files.length === 0 || state.files.length > 64) return undefined;
+  if (!state.files.every((file): file is PlaygroundFile =>
+    typeof file?.id === "string" && file.id.length > 0 && file.id.length <= 100 &&
+    typeof file.name === "string" && file.name.length > 0 && file.name.length <= 240 &&
+    file.name.endsWith(".ts") && !file.name.includes("..") && !file.name.includes("\\") && !file.name.startsWith("/") &&
+    typeof file.source === "string" && file.source.length <= 500_000
+  )) return undefined;
+  if (new Set(state.files.map((file) => file.id)).size !== state.files.length) return undefined;
+  if (new Set(state.files.map((file) => file.name)).size !== state.files.length) return undefined;
+  const activeFileId = state.files.some((file) => file.id === state.activeFileId)
+    ? state.activeFileId!
+    : state.files[0].id;
+  return { activeFileId, files: state.files.map((file) => ({ ...file })) };
+};
+
 const decodeState = (): EncodedState | undefined => {
   const encoded = new URLSearchParams(window.location.hash.slice(1)).get("code");
   if (!encoded) return undefined;
   try {
     const json = decodeURIComponent(Array.from(atob(encoded), (character) => `%${character.charCodeAt(0).toString(16).padStart(2, "0")}`).join(""));
     const state = JSON.parse(json) as EncodedState;
-    const projectFiles = Array.isArray(state.files)
-      ? state.files.filter((file): file is PlaygroundFile =>
-          typeof file?.id === "string" && typeof file.name === "string" && typeof file.source === "string"
-        )
-      : [];
-    if (projectFiles.length) {
-      return { activeFileId: state.activeFileId, files: projectFiles };
-    }
+    const project = parseProjectState(state);
+    if (project) return project;
     return typeof state.source === "string" ? { source: state.source } : undefined;
   } catch {
     return undefined;
@@ -269,8 +288,21 @@ const activateFileModel = (file: PlaygroundFile) => editor?.setModel(projectMode
 
 const syncHash = () => {
   const url = new URL(window.location.href);
-  url.hash = new URLSearchParams({ code: encodeState({ activeFileId: activeFileId.value, files: files.value }) }).toString();
+  url.hash = new URLSearchParams({ code: encodeState({ activeFileId: activeFileId.value, files: files.value, version: 1 }) }).toString();
   window.history.replaceState({}, "", url);
+};
+
+const replaceProject = (project: ProjectState) => {
+  editorModels.forEach((model) => model.dispose());
+  editorModels.clear();
+  files.value = project.files;
+  activeFileId.value = project.activeFileId;
+  activePreset.value = undefined;
+  fileActionError.value = "";
+  cancelRename();
+  const selected = files.value.find((file) => file.id === activeFileId.value) ?? files.value[0];
+  activateFileModel(selected);
+  compileNow();
 };
 
 const scheduleCompile = () => {
@@ -497,6 +529,40 @@ const copyShareLink = async () => {
     shareLabel.value = "Link ready";
   }
   window.setTimeout(() => { shareLabel.value = "Copy link"; }, 1400);
+};
+
+const exportProject = () => {
+  const project = { activeFileId: activeFileId.value, files: files.value, version: 1 } satisfies EncodedState;
+  const url = URL.createObjectURL(new Blob([JSON.stringify(project, null, 2)], { type: "application/json" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "elfui-playground.json";
+  link.click();
+  URL.revokeObjectURL(url);
+  exportLabel.value = "Exported";
+  window.setTimeout(() => { exportLabel.value = "Export"; }, 1400);
+};
+
+const importProject = async (event: Event) => {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file) return;
+  if (file.size > 2_000_000) {
+    fileActionError.value = "The project file is too large to import (maximum 2 MB).";
+    return;
+  }
+  try {
+    const project = parseProjectState(JSON.parse(await file.text()) as EncodedState);
+    if (!project) throw new Error("The file does not contain a valid ElfUI TypeScript project.");
+    replaceProject(project);
+    importLabel.value = "Imported";
+    window.setTimeout(() => { importLabel.value = "Import"; }, 1400);
+  } catch (error) {
+    fileActionError.value = error instanceof Error ? error.message : "Unable to import this project file.";
+    importLabel.value = "Import failed";
+    window.setTimeout(() => { importLabel.value = "Import"; }, 1800);
+  }
 };
 
 onMounted(() => {

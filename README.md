@@ -9,6 +9,10 @@ project panel, switch between them, and copy the resulting URL to share the
 entire workspace. Every file is compiled in a Worker; the selected file is run
 inside the isolated preview.
 
+Use **Export** to save the entire workspace as `elfui-playground.json`, and
+**Import** to restore it later. Imported projects are validated before their
+Monaco models and preview are replaced.
+
 The default **Application** starter mirrors a real ElfUI project: `App.ts`
 exports a macro component and `main.ts` imports it and calls
 `createApp(App).mount("#app")`. Ordinary TypeScript entry modules are executed
