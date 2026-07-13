@@ -105,6 +105,7 @@ import type {
   PlaygroundFile,
   PreviewStatusMessage
 } from "./protocol";
+import { elfuiTypeDefinitions } from "./elfui-types";
 import { playgroundPresets } from "./presets";
 
 type EncodedState = {
@@ -144,7 +145,7 @@ let compiler: Worker | undefined;
 let debounce: number | undefined;
 let requestId = 0;
 let pendingPreview: Extract<CompileResponse, { files?: unknown }> | undefined;
-let syncingEditor = false;
+const editorModels = new Map<string, monaco.editor.ITextModel>();
 
 const previewUrl = computed(() => `${previewOrigin.value}/preview?run=${previewKey.value}`);
 const compiledSource = computed(() => compiledFiles.value.find((file) => file.id === activeFileId.value)?.code ?? "");
@@ -180,6 +181,20 @@ const decodeState = (): EncodedState | undefined => {
 };
 
 const source = (): string => editor?.getValue() ?? activeFile.value?.source ?? "";
+
+const modelUri = (file: PlaygroundFile) => monaco.Uri.parse(
+  `file:///playground/${file.name.split("/").map(encodeURIComponent).join("/")}`
+);
+
+const projectModel = (file: PlaygroundFile): monaco.editor.ITextModel => {
+  const existing = editorModels.get(file.id);
+  if (existing) return existing;
+  const model = monaco.editor.createModel(file.source, "typescript", modelUri(file));
+  editorModels.set(file.id, model);
+  return model;
+};
+
+const activateFileModel = (file: PlaygroundFile) => editor?.setModel(projectModel(file));
 
 const syncHash = () => {
   const url = new URL(window.location.href);
@@ -234,19 +249,12 @@ const compileNow = () => {
   });
 };
 
-const setEditorValue = (value: string) => {
-  if (!editor) return;
-  syncingEditor = true;
-  editor.setValue(value);
-  syncingEditor = false;
-};
-
 const openFile = (id: string) => {
   const file = files.value.find((candidate) => candidate.id === id);
   if (!file || id === activeFileId.value) return;
   activeFileId.value = id;
   activePreset.value = undefined;
-  setEditorValue(file.source);
+  activateFileModel(file);
   updateEditorMarkers();
   compileNow();
 };
@@ -256,7 +264,7 @@ const showDiagnostic = async (diagnostic: PlaygroundDiagnostic) => {
   if (file && file.id !== activeFileId.value) {
     activeFileId.value = file.id;
     activePreset.value = undefined;
-    setEditorValue(file.source);
+    activateFileModel(file);
     await nextTick();
   }
   if (!diagnostic.line || !editor) return;
@@ -287,7 +295,7 @@ export const ${component} = defineHtml(html\`
   files.value = [...files.value, file];
   activeFileId.value = id;
   activePreset.value = undefined;
-  setEditorValue(file.source);
+  activateFileModel(file);
   compileNow();
 };
 
@@ -296,11 +304,13 @@ const deleteFile = (id: string) => {
   const index = files.value.findIndex((file) => file.id === id);
   if (index < 0) return;
   const remaining = files.value.filter((file) => file.id !== id);
+  editorModels.get(id)?.dispose();
+  editorModels.delete(id);
   files.value = remaining;
   if (activeFileId.value === id) {
     const next = remaining[Math.min(index, remaining.length - 1)];
     activeFileId.value = next.id;
-    setEditorValue(next.source);
+    activateFileModel(next);
   }
   activePreset.value = undefined;
   compileNow();
@@ -310,9 +320,11 @@ const loadPreset = (id: (typeof playgroundPresets)[number]["id"]) => {
   const preset = playgroundPresets.find((candidate) => candidate.id === id);
   if (!preset || !editor) return;
   activePreset.value = id;
+  editorModels.forEach((model) => model.dispose());
+  editorModels.clear();
   files.value = [initialFile(preset.source)];
   activeFileId.value = files.value[0].id;
-  setEditorValue(preset.source);
+  activateFileModel(files.value[0]);
   compileNow();
 };
 
@@ -396,6 +408,18 @@ onMounted(() => {
     },
     rules: []
   });
+  monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
+    allowNonTsExtensions: true,
+    module: monaco.languages.typescript.ModuleKind.ESNext,
+    moduleResolution: monaco.languages.typescript.ModuleResolutionKind.NodeJs,
+    strict: true,
+    target: monaco.languages.typescript.ScriptTarget.ES2020
+  });
+  monaco.languages.typescript.typescriptDefaults.setEagerModelSync(true);
+  monaco.languages.typescript.typescriptDefaults.addExtraLib(
+    elfuiTypeDefinitions,
+    "file:///playground/node_modules/@elfui/core/index.d.ts"
+  );
   const shared = decodeState();
   files.value = shared?.files?.length ? shared.files : [initialFile(shared?.source)];
   activeFileId.value = files.value.some((file) => file.id === shared?.activeFileId)
@@ -405,6 +429,7 @@ onMounted(() => {
   activePreset.value = files.value.length === 1
     ? presets.find((preset) => preset.source === restoredFile.source)?.id
     : undefined;
+  const restoredModel = projectModel(restoredFile);
   editor = monaco.editor.create(editorRoot.value ?? document.body, {
     automaticLayout: true,
     fontFamily: "JetBrains Mono, Cascadia Code, Consolas, monospace",
@@ -414,11 +439,9 @@ onMounted(() => {
     padding: { top: 18, bottom: 18 },
     scrollBeyondLastLine: false,
     theme: "elfui-night",
-    value: restoredFile.source,
-    language: "typescript"
+    model: restoredModel
   });
   editor.onDidChangeModelContent(() => {
-    if (syncingEditor) return;
     const file = activeFile.value;
     if (!file) return;
     files.value = files.value.map((candidate) => candidate.id === file.id ? { ...candidate, source: source() } : candidate);
@@ -432,6 +455,8 @@ onBeforeUnmount(() => {
   if (debounce) window.clearTimeout(debounce);
   compiler?.terminate();
   editor?.dispose();
+  editorModels.forEach((model) => model.dispose());
+  editorModels.clear();
   window.removeEventListener("message", receivePreview);
 });
 </script>
