@@ -317,6 +317,18 @@ const toggleFolder = (id: string) => {
   collapsedFolders.value = next;
 };
 
+const revealFilePath = (filename: string) => {
+  const folders = normalizeProjectPath(filename).split("/").slice(0, -1);
+  if (!folders.length) return;
+  const next = new Set(collapsedFolders.value);
+  let path = "";
+  for (const folder of folders) {
+    path = path ? `${path}/${folder}` : folder;
+    next.delete(path);
+  }
+  collapsedFolders.value = next;
+};
+
 const encodeState = (state: EncodedState): string => {
   const json = JSON.stringify(state);
   return btoa(encodeURIComponent(json).replace(/%([0-9A-F]{2})/g, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16))));
@@ -565,6 +577,7 @@ const commitRename = (id: string) => {
     }
   }
   files.value = updatedFiles;
+  revealFilePath(name);
   syncProjectModels();
   if (activeFileId.value === id) activateFileModel(updatedFiles.find((file) => file.id === id)!);
   fileActionError.value = "";
