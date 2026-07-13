@@ -264,7 +264,8 @@ onBeforeUnmount(() => {
   font: 15px/1.6 Inter, ui-sans-serif, system-ui, sans-serif;
 }
 
-.preview-mount { width: min(100%, 720px); }
+.preview-mount { display: grid; width: min(100%, 720px); justify-items: center; }
+.preview-mount > * { max-width: 100%; }
 .preview-message { margin: 0; color: #ff9cab; }
 .preview-host.light { color: #18334a; background: #f8fbfd; }
 .preview-host.light .preview-message { color: #b4233b; }

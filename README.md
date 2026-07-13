@@ -14,6 +14,12 @@ project panel renders those paths as a collapsible tree and normalizes repeated
 path separators when a file is renamed. Click **+** to immediately enter the
 path and name of a new TypeScript file.
 
+Click **Open** in Explorer to replace the workspace from a local folder, or
+drop a folder/files directly onto the Explorer. Relative paths are preserved,
+so imports such as `../components/Button` keep working exactly as they do in a
+VS Code project. Local folder import accepts up to 64 TypeScript files, with a
+500 KB limit per file.
+
 Use **Export** to save the entire workspace as `elfui-playground.json`, and
 **Import** to restore it later. Imported projects are validated before their
 Monaco models and preview are replaced.
@@ -52,6 +58,10 @@ file. Normal edit/compile behavior resumes immediately after formatting.
 
 Use **Ctrl+Enter** (or **Cmd+Enter** on macOS) to run the project from the
 keyboard.
+
+**Run** updates the already-loaded preview sandbox instead of recreating its
+iframe. A successful run therefore keeps the canvas stable rather than showing
+a white transition between renders.
 
 The **Console** output tab captures `console.log`, `console.info`,
 `console.warn`, `console.error`, and unhandled preview rejections. Entries are
@@ -92,9 +102,11 @@ origin during local development.
 
 ## Production
 
-Deploy the same static app to two origins. The editor lives at `play.elfui.dev`
-and the `/preview` route lives at a separate `preview.elfui.dev` origin. Set
-`VITE_PLAYGROUND_PREVIEW_ORIGIN` to the preview origin before building.
+Deploy the same static app to two Vercel projects (or two other static-site
+origins). The editor lives at `play.elfui.dev` and the `/preview` route lives
+at a separate `preview.elfui.dev` origin. Configure the preview project first,
+then set `VITE_PLAYGROUND_PREVIEW_ORIGIN=https://preview.elfui.dev` in the
+editor project's Production environment variables and redeploy the editor.
 
 The application intentionally refuses to execute user code when both origins
 are the same.

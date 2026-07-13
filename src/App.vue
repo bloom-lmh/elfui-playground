@@ -40,7 +40,22 @@
 
     <section class="workspace" aria-label="ElfUI component playground">
       <aside class="file-panel">
-        <div class="panel-heading"><span>PROJECT</span><button type="button" title="New TypeScript file" @click="createFile">+</button></div>
+        <div class="panel-heading">
+          <span>EXPLORER</span>
+          <div class="project-actions">
+            <button type="button" title="Open local folder" @click="folderInput?.click()">Open</button>
+            <button type="button" title="New TypeScript file" @click="createFile">+</button>
+          </div>
+        </div>
+        <input ref="folderInput" hidden type="file" multiple webkitdirectory @change="importFolder" />
+        <div
+          :class="['project-dropzone', { dragging: projectDragActive }]"
+          @dragenter.prevent="projectDragActive = true"
+          @dragover.prevent="projectDragActive = true"
+          @dragleave.prevent="projectDragActive = false"
+          @drop.prevent="importDroppedProject"
+        >
+          <div class="workspace-root"><span aria-hidden="true">⌄</span>{{ workspaceName }}</div>
         <div class="file-list">
           <template v-for="item in projectTreeItems" :key="item.id">
             <button
@@ -48,7 +63,7 @@
               class="folder-row"
               type="button"
               :aria-expanded="!item.collapsed"
-              :style="{ paddingLeft: `${14 + item.depth * 16}px` }"
+              :style="{ paddingLeft: `${20 + item.depth * 16}px` }"
               @click="toggleFolder(item.id)"
             >
               <span aria-hidden="true">{{ item.collapsed ? '›' : '⌄' }}</span>{{ item.name }}
@@ -57,7 +72,7 @@
               <button
                 v-if="editingFileId !== item.file.id"
                 :class="['file-row', { active: activeFileId === item.file.id }]"
-                :style="{ paddingLeft: `${14 + item.depth * 16}px` }"
+                :style="{ paddingLeft: `${20 + item.depth * 16}px` }"
                 type="button"
                 @click="openFile(item.file.id)"
                 @dblclick="startRename(item.file)"
@@ -85,6 +100,8 @@
             </div>
           </template>
         </div>
+          <p v-if="projectDragActive" class="project-drop-hint">Drop TypeScript files or a folder to replace this workspace.</p>
+        </div>
         <p v-if="fileActionError" class="file-action-error">{{ fileActionError }}</p>
         <div class="preset-section">
           <p>STARTERS</p>
@@ -98,7 +115,7 @@
             {{ preset.title }}
           </button>
         </div>
-        <div class="file-panel-note">Files compile as project modules. Use relative imports such as <code>./Component2</code>; select a file to preview it.</div>
+        <div class="file-panel-note">Open a local folder or drop files here. Folder paths are preserved as project modules, so relative imports work as they do in VS Code.</div>
       </aside>
 
       <section class="editor-area">
@@ -143,7 +160,6 @@
           :class="['preview-stage', `viewport-${previewViewport}`]"
         >
           <iframe
-            :key="previewKey"
             ref="previewFrame"
             class="preview-frame"
             :src="previewUrl"
@@ -158,7 +174,10 @@
           </li>
           <li v-if="!previewLogs.length" class="empty"><code>Console output from the preview will appear here.</code></li>
         </ol>
-        <div v-else-if="!previewOrigin" class="preview-unavailable">Configure an isolated preview origin to run code.</div>
+        <div v-else-if="!previewOrigin" class="preview-unavailable">
+          <strong>Preview sandbox is not connected.</strong>
+          <p>Set <code>VITE_PLAYGROUND_PREVIEW_ORIGIN</code> to the separate Vercel preview project, then redeploy this editor.</p>
+        </div>
       </section>
     </section>
 
@@ -221,6 +240,15 @@ type PreviewViewport = "responsive" | "tablet" | "mobile";
 type ProjectTreeFolder = {
   files: PlaygroundFile[];
   folders: Map<string, ProjectTreeFolder>;
+};
+
+type LocalProjectFile = { file: File; path: string };
+type WebkitFileEntry = {
+  createReader?: () => { readEntries: (callback: (entries: WebkitFileEntry[]) => void) => void };
+  file?: (callback: (file: File) => void, errorCallback?: () => void) => void;
+  isDirectory: boolean;
+  isFile: boolean;
+  name: string;
 };
 
 const initialFile = (source = playgroundPresets.find((preset) => preset.id === "counter")!.source): PlaygroundFile => ({
@@ -335,13 +363,12 @@ const diagnostics = ref<PlaygroundDiagnostic[]>([]);
 const editorRoot = ref<HTMLElement | null>(null);
 const previewFrame = ref<HTMLIFrameElement | null>(null);
 const previewOrigin = ref("");
-const previewKey = ref(0);
+const previewHostReady = ref(false);
 const statusKind = ref<"compiling" | "error" | "ready">("compiling");
 const shareLabel = ref("Copy link");
 const formatLabel = ref("Format");
 const autoSave = ref(initialAutoSave());
 const theme = ref<PlaygroundTheme>(initialTheme());
-const previewTheme = ref<PlaygroundTheme>(theme.value);
 const exportLabel = ref("Export");
 const downloadLabel = ref("Download");
 const importLabel = ref("Import");
@@ -364,6 +391,9 @@ const fileNameDraft = ref("");
 const fileActionError = ref("");
 const renameInputs = ref<HTMLInputElement[]>([]);
 const importInput = ref<HTMLInputElement | null>(null);
+const folderInput = ref<HTMLInputElement | null>(null);
+const projectDragActive = ref(false);
+const workspaceName = ref("playground");
 
 let editor: monaco.editor.IStandaloneCodeEditor | undefined;
 let compiler: Worker | undefined;
@@ -372,7 +402,7 @@ let requestId = 0;
 let pendingPreview: Extract<CompileResponse, { files?: unknown }> | undefined;
 const editorModels = new Map<string, monaco.editor.ITextModel>();
 
-const previewUrl = computed(() => `${previewOrigin.value}/preview?run=${previewKey.value}&theme=${previewTheme.value}`);
+const previewUrl = computed(() => previewOrigin.value ? `${previewOrigin.value}/preview` : "");
 const compiledSource = computed(() => compiledFiles.value.find((file) => file.id === activeFileId.value)?.code ?? "");
 const projectTreeItems = computed<ProjectTreeItem[]>(() => {
   const root: ProjectTreeFolder = { files: [], folders: new Map() };
@@ -636,6 +666,7 @@ const replaceProject = (project: ProjectState) => {
   activeFileId.value = project.activeFileId;
   entryFileId.value = project.entryFileId;
   imports.value = { ...project.imports };
+  workspaceName.value = "imported-workspace";
   syncProjectModels();
   activePreset.value = undefined;
   fileActionError.value = "";
@@ -791,6 +822,105 @@ export const ${component} = defineHtml(html\`
   compileNow();
 };
 
+const localPath = (value: string): string => normalizeProjectPath(value).replace(/^\/+/, "").replace(/\/{2,}/g, "/");
+
+const localWorkspaceRoot = (entries: LocalProjectFile[]): string | undefined => {
+  const firstSegments = entries
+    .map(({ path }) => localPath(path).split("/"))
+    .filter((segments) => segments.length > 1)
+    .map(([segment]) => segment);
+  return firstSegments.length === entries.length && new Set(firstSegments).size === 1 ? firstSegments[0] : undefined;
+};
+
+const readFileEntry = (entry: WebkitFileEntry, prefix = ""): Promise<LocalProjectFile[]> => {
+  if (entry.isFile && entry.file) {
+    return new Promise((resolve) => entry.file!(
+      (file) => resolve([{ file, path: `${prefix}${entry.name}` }]),
+      () => resolve([])
+    ));
+  }
+  if (!entry.isDirectory || !entry.createReader) return Promise.resolve([]);
+
+  const reader = entry.createReader();
+  const readAll = async (): Promise<WebkitFileEntry[]> => {
+    const entries: WebkitFileEntry[] = [];
+    while (true) {
+      const batch = await new Promise<WebkitFileEntry[]>((resolve) => reader.readEntries(resolve));
+      if (!batch.length) return entries;
+      entries.push(...batch);
+    }
+  };
+  return readAll().then(async (children) => {
+    const nested = await Promise.all(children.map((child) => readFileEntry(child, `${prefix}${entry.name}/`)));
+    return nested.flat();
+  });
+};
+
+const applyLocalWorkspace = async (candidates: LocalProjectFile[]) => {
+  const root = localWorkspaceRoot(candidates);
+  const normalized = candidates
+    .map(({ file, path }) => ({ file, path: root ? localPath(path).slice(root.length + 1) : localPath(path) }))
+    .filter(({ file, path }) => file.name.endsWith(".ts") && isValidProjectPath(path));
+
+  if (!normalized.length) {
+    fileActionError.value = "Choose a folder containing TypeScript (.ts) files.";
+    return;
+  }
+  if (normalized.length > 64) {
+    fileActionError.value = "A Playground workspace can contain at most 64 TypeScript files.";
+    return;
+  }
+  if (normalized.some(({ file }) => file.size > 500_000)) {
+    fileActionError.value = "Each imported TypeScript file must be 500 KB or smaller.";
+    return;
+  }
+  if (new Set(normalized.map(({ path }) => path)).size !== normalized.length) {
+    fileActionError.value = "The selected folder contains duplicate TypeScript paths.";
+    return;
+  }
+
+  const source = await Promise.all(normalized.map(async ({ file, path }, index) => ({
+    id: `local-${Date.now()}-${index}`,
+    name: path,
+    source: await file.text()
+  })));
+  editorModels.forEach((model) => model.dispose());
+  editorModels.clear();
+  files.value = source;
+  const entry = source.find((file) => /(^|\/)main\.ts$/.test(file.name))
+    ?? source.find((file) => /(^|\/)App\.ts$/.test(file.name))
+    ?? source[0];
+  activeFileId.value = entry.id;
+  entryFileId.value = entry.id;
+  imports.value = {};
+  workspaceName.value = root || "workspace";
+  collapsedFolders.value = new Set();
+  activePreset.value = undefined;
+  fileActionError.value = "";
+  syncProjectModels();
+  activateFileModel(entry);
+  compileNow();
+};
+
+const importFolder = async (event: Event) => {
+  const input = event.target as HTMLInputElement;
+  const selected = [...(input.files ?? [])].map((file) => ({ file, path: file.webkitRelativePath || file.name }));
+  input.value = "";
+  await applyLocalWorkspace(selected);
+};
+
+const importDroppedProject = async (event: DragEvent) => {
+  projectDragActive.value = false;
+  const items = [...(event.dataTransfer?.items ?? [])];
+  const entries = items
+    .map((item) => item.webkitGetAsEntry?.() as unknown as WebkitFileEntry | null)
+    .filter((entry): entry is WebkitFileEntry => Boolean(entry));
+  const selected = entries.length
+    ? (await Promise.all(entries.map((entry) => readFileEntry(entry)))).flat()
+    : [...(event.dataTransfer?.files ?? [])].map((file) => ({ file, path: file.name }));
+  await applyLocalWorkspace(selected);
+};
+
 const deleteFile = (id: string) => {
   if (files.value.length === 1) return;
   const index = files.value.findIndex((file) => file.id === id);
@@ -822,6 +952,7 @@ const loadPreset = (id: (typeof playgroundPresets)[number]["id"]) => {
   activeFileId.value = preset.project?.activeFileId ?? files.value[0].id;
   entryFileId.value = preset.project?.entryFileId ?? activeFileId.value;
   imports.value = {};
+  workspaceName.value = preset.title.toLowerCase().replace(/\s+/g, "-");
   syncProjectModels();
   const selected = files.value.find((file) => file.id === activeFileId.value) ?? files.value[0];
   activateFileModel(selected);
@@ -842,9 +973,7 @@ const receiveCompile = async ({ data }: MessageEvent<CompileResponse>) => {
   }
   compiledFiles.value = data.files;
   pendingPreview = data;
-  previewTheme.value = theme.value;
-  previewKey.value += 1;
-  await nextTick();
+  if (previewHostReady.value) sendPreview();
 };
 
 const sendPreview = () => {
@@ -871,13 +1000,15 @@ const handleRunShortcut = (event: KeyboardEvent) => {
 };
 
 const receivePreview = ({ data, origin, source: messageSource }: MessageEvent<PreviewStatusMessage | PreviewConsoleMessage>) => {
-  if (origin !== previewOrigin.value || messageSource !== previewFrame.value?.contentWindow || data.id !== requestId) return;
-  if (data.type === "elfui-playground:console") {
-    previewLogs.value = [...previewLogs.value.slice(-199), { id: data.id, level: data.level, message: data.message }];
+  if (origin !== previewOrigin.value || messageSource !== previewFrame.value?.contentWindow) return;
+  if (data.type === "elfui-playground:host-ready") {
+    previewHostReady.value = true;
+    sendPreview();
     return;
   }
-  if (data.type === "elfui-playground:host-ready") {
-    sendPreview();
+  if (data.id !== requestId) return;
+  if (data.type === "elfui-playground:console") {
+    previewLogs.value = [...previewLogs.value.slice(-199), { id: data.id, level: data.level, message: data.message }];
     return;
   }
   statusKind.value = data.type === "elfui-playground:ready" ? "ready" : "error";
@@ -1173,6 +1304,7 @@ onMounted(() => {
     : files.value.length === 1
       ? presets.find((preset) => preset.source === restoredFile.source)?.id
       : undefined;
+  workspaceName.value = activePreset.value ?? "playground";
   const restoredModel = projectModel(restoredFile);
   editor = monaco.editor.create(editorRoot.value ?? document.body, {
     automaticLayout: true,
@@ -1208,11 +1340,11 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .playground-shell { min-height: 100vh; color: #d5e7f4; background: #07111f; }
-.topbar { display: flex; align-items: center; justify-content: space-between; min-height: 64px; padding: 0 26px; border-bottom: 1px solid #193044; background: rgba(5, 14, 25, .92); }
-.brand { color: #f2fbff; font: 800 20px/1 Georgia, serif; text-decoration: none; }
-.brand span { margin-left: 9px; color: #49d9ca; font: 700 12px/1 Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; }
-.topbar-actions { display: flex; align-items: center; gap: 9px; }
-.quiet-button, .run-button { min-height: 34px; padding: 0 12px; border: 1px solid #254158; border-radius: 5px; color: #b5cddd; background: #0b1b2d; font: 700 12px/1 Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; text-decoration: none; }
+.topbar { display: flex; align-items: center; justify-content: space-between; min-height: 56px; padding: 0 18px; border-bottom: 1px solid #193044; background: rgba(5, 14, 25, .92); }
+.brand { color: #f2fbff; font: 800 18px/1 Georgia, serif; text-decoration: none; }
+.brand span { margin-left: 8px; color: #49d9ca; font: 700 11px/1 Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+.topbar-actions { display: flex; align-items: center; gap: 7px; }
+.quiet-button, .run-button { min-height: 32px; padding: 0 10px; border: 1px solid #254158; border-radius: 5px; color: #b5cddd; background: #0b1b2d; font: 700 11px/1 Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; text-decoration: none; }
 .quiet-button:hover { border-color: #4380a2; color: #e7f8ff; }
 .run-button { border-color: #32c7bf; color: #052125; background: #45d8cf; }
 .run-button span { margin-right: 5px; font-size: 10px; }
@@ -1228,12 +1360,20 @@ onBeforeUnmount(() => {
 .import-map-dialog textarea:focus { border-color: #45d8cf; }
 .import-map-dialog .import-map-error { color: #ff9fab; }
 .import-map-actions { display: flex; justify-content: flex-end; gap: 9px; padding: 18px 20px; }
-.workspace { display: grid; grid-template-columns: 220px minmax(440px, 1.12fr) minmax(360px, .88fr); min-height: calc(100vh - 64px - 132px); }
+.workspace { display: grid; grid-template-columns: 250px minmax(440px, 1.12fr) minmax(360px, .88fr); min-height: calc(100vh - 56px - 132px); }
 .file-panel, .editor-area, .preview-area { min-width: 0; border-right: 1px solid #193044; }
 .file-panel { display: flex; flex-direction: column; background: #081522; }
 .panel-heading, .tabbar, .preview-toolbar { display: flex; align-items: center; min-height: 43px; padding: 0 14px; border-bottom: 1px solid #193044; color: #7d9ab0; font: 750 11px/1 Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .1em; }
 .panel-heading { justify-content: space-between; }
-.panel-heading button { border: 0; color: #72adc9; background: transparent; font-size: 18px; cursor: pointer; }
+.project-actions { display: flex; align-items: center; gap: 3px; }
+.panel-heading button { min-height: 26px; padding: 0 5px; border: 0; border-radius: 3px; color: #72adc9; background: transparent; font: 750 10px/1 Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
+.panel-heading button:last-child { font-size: 18px; }
+.panel-heading button:hover { color: #dff8ff; background: #163045; }
+.project-dropzone { display: flex; flex: 1; min-height: 0; flex-direction: column; overflow: auto; border: 1px solid transparent; transition: border-color .15s ease, background .15s ease; }
+.project-dropzone.dragging { border-color: #45d8cf; background: #0c253633; }
+.workspace-root { display: flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 14px; color: #c9deeb; border-bottom: 1px solid #173044; font: 750 12px/1 Inter, ui-sans-serif, system-ui, sans-serif; }
+.workspace-root span { color: #49d9ca; font-size: 15px; }
+.file-list { padding: 4px 0; }
 .file-entry { display: flex; align-items: stretch; }
 .folder-row { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 30px; border: 0; color: #6f8da3; background: transparent; text-align: left; font: 750 10px/1 Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .06em; cursor: pointer; }
 .folder-row:hover { color: #b7d6e5; background: #0b1d2d; }
@@ -1242,11 +1382,13 @@ onBeforeUnmount(() => {
 .file-row.active { border-left-color: #45d8cf; color: #effaff; background: #0e2233; }
 .file-mark { color: #49d9ca; font-size: 9px; font-weight: 900; }
 .rename-file { flex: 1; min-width: 0; margin: 4px 6px; padding: 0 7px; border: 1px solid #45d8cf; border-radius: 3px; outline: 0; color: #effaff; background: #0e2233; font: 650 12px/1 "JetBrains Mono", ui-monospace, monospace; }
-.rename-file-button { border: 0; padding: 0 6px; color: #5c7b91; background: transparent; font: 700 9px/1 Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; opacity: .55; text-transform: uppercase; }
+.rename-file-button { width: 26px; border: 0; padding: 0; color: #5c7b91; background: transparent; font: 700 14px/1 Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; opacity: 0; }
 .file-entry:hover .rename-file-button { opacity: 1; color: #8ec7e0; }
-.delete-file { width: 31px; border: 0; color: #5c7b91; background: transparent; font-size: 16px; cursor: pointer; }
+.delete-file { width: 26px; border: 0; color: #5c7b91; background: transparent; font-size: 16px; cursor: pointer; opacity: 0; }
+.file-entry:hover .delete-file { opacity: 1; }
 .delete-file:hover { color: #ff9daa; background: #3a172333; }
 .file-action-error { margin: 8px 14px 0; color: #ff9daa; font-size: 11px; line-height: 1.45; }
+.project-drop-hint { margin: 8px 12px; padding: 10px; border: 1px dashed #45d8cf; border-radius: 4px; color: #8fe6df; background: #0d2a3933; font-size: 11px; line-height: 1.45; }
 .preset-section { padding: 24px 12px; }
 .preset-section p { margin: 0 0 10px; color: #547187; font: 750 10px/1 Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .12em; }
 .preset-button { display: block; width: 100%; margin-bottom: 5px; padding: 9px 10px; border: 1px solid transparent; border-radius: 4px; color: #91aabd; background: transparent; text-align: left; font: 650 12px/1 Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
@@ -1265,7 +1407,7 @@ onBeforeUnmount(() => {
 .compile-state.ready { color: #54e7ce; background: #12645c44; }
 .compile-state.error { color: #ff9daa; background: #6f263544; }
 .editor-root { min-height: 0; }
-.preview-area { display: grid; grid-template-rows: 43px minmax(0, 1fr); border-right: 0; background: #091726; }
+.preview-area { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 43px minmax(0, 1fr); border-right: 0; background: #091726; }
 .preview-toolbar { justify-content: space-between; color: #a2bccd; letter-spacing: 0; }
 .output-tabs { display: flex; align-items: stretch; align-self: stretch; margin-left: -14px; }
 .output-tabs button { padding: 0 14px; border: 0; border-right: 1px solid #193044; color: #7896aa; background: transparent; font: 700 11px/1 Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
@@ -1279,10 +1421,10 @@ onBeforeUnmount(() => {
 .console-clear { margin-left: auto; border: 0; color: #77acc5; background: transparent; font: 700 11px/1 Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
 .console-clear:hover { color: #e0f5ff; }
 .live-dot { display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 999px; background: #49d9ca; box-shadow: 0 0 12px #49d9ca; }
-.preview-stage { display: flex; min-width: 0; min-height: 0; justify-content: center; overflow: auto; background: #06111d; }
-.preview-frame { flex: 0 0 auto; width: 100%; height: 100%; border: 0; background: #08111f; }
-.viewport-tablet .preview-frame { width: 768px; }
-.viewport-mobile .preview-frame { width: 390px; }
+.preview-stage { display: flex; box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; min-height: 0; justify-content: center; padding: 18px; overflow: auto; background: #06111d; }
+.preview-frame { flex: 0 1 auto; box-sizing: border-box; width: 100%; max-width: 960px; min-width: 0; height: 100%; border: 1px solid #19344b; border-radius: 7px; background: #08111f; box-shadow: 0 12px 34px #0003; }
+.viewport-tablet .preview-frame { flex-shrink: 0; width: 768px; max-width: none; }
+.viewport-mobile .preview-frame { flex-shrink: 0; width: 390px; max-width: none; }
 .compiled-output { min-width: 0; margin: 0; padding: 18px 20px; overflow: auto; color: #c6d9e5; background: #07111f; font: 13px/1.65 "JetBrains Mono", ui-monospace, monospace; tab-size: 2; white-space: pre; }
 .console-output { display: grid; align-content: start; gap: 0; min-width: 0; margin: 0; padding: 10px 0; overflow: auto; color: #c6d9e5; background: #07111f; list-style: none; font: 12px/1.55 "JetBrains Mono", ui-monospace, monospace; }
 .console-output li { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 12px; padding: 7px 18px; border-bottom: 1px solid #19304488; }
@@ -1291,7 +1433,10 @@ onBeforeUnmount(() => {
 .console-output li.warn b { color: #f2c86b; }
 .console-output li.error b { color: #ff94a4; }
 .console-output li.empty { display: block; color: #7896aa; }
-.preview-unavailable { display: grid; place-items: center; padding: 30px; color: #ffafba; text-align: center; font-size: 13px; line-height: 1.6; }
+.preview-unavailable { display: grid; align-content: center; justify-items: center; gap: 8px; padding: 30px; color: #ffafba; text-align: center; font-size: 13px; line-height: 1.6; }
+.preview-unavailable strong { color: #ffd5dc; font-size: 15px; }
+.preview-unavailable p { max-width: 330px; margin: 0; color: #cc9ba7; }
+.preview-unavailable code { color: #74dfd5; }
 .diagnostics { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 28px; min-height: 132px; padding: 23px 26px; border-top: 1px solid #193044; background: #081522; }
 .diagnostics-heading p { margin: 0 0 9px; color: #49d9ca; font: 800 10px/1 Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .13em; }
 .diagnostics-heading h1 { margin: 0; color: #e8f7ff; font-size: 20px; }
@@ -1322,6 +1467,9 @@ onBeforeUnmount(() => {
 .light .preview-area { background: #fff; }
 .light .file-panel, .light .editor-area, .light .preview-area { border-color: #cbdbe5; }
 .light .panel-heading, .light .tabbar, .light .preview-toolbar { border-color: #cbdbe5; color: #577487; }
+.light .panel-heading button:hover { color: #173b53; background: #dff0f5; }
+.light .project-dropzone.dragging { border-color: #189e9a; background: #dff5f333; }
+.light .workspace-root { border-color: #d7e4eb; color: #34566e; }
 .light .folder-row { color: #587286; }
 .light .folder-row:hover { color: #254d66; background: #e5f0f5; }
 .light .file-row { color: #456177; }
@@ -1344,7 +1492,7 @@ onBeforeUnmount(() => {
 .light .output-tabs button { border-color: #cbdbe5; color: #547084; }
 .light .output-tabs button.active { color: #173b53; background: #e5f0f5; }
 .light .preview-stage { background: #eaf2f6; }
-.light .preview-frame { background: #f8fbfd; }
+.light .preview-frame { border-color: #cadce6; background: #f8fbfd; box-shadow: 0 12px 34px #35556b22; }
 .light .compiled-output { color: #25465e; background: #f8fbfd; }
 .light .console-output { color: #25465e; background: #f8fbfd; }
 .light .console-output li { border-color: #d9e7ee; }
@@ -1352,6 +1500,10 @@ onBeforeUnmount(() => {
 .light .console-output li.warn b { color: #a76d00; }
 .light .console-output li.error b { color: #b4233b; }
 .light .console-output li.empty { color: #718da0; }
+.light .project-drop-hint { border-color: #189e9a; color: #137f84; background: #e8f8f6; }
+.light .preview-unavailable strong { color: #9d1830; }
+.light .preview-unavailable p { color: #8b6270; }
+.light .preview-unavailable code { color: #137f84; }
 .light .diagnostics { border-color: #cbdbe5; background: #f3f8fb; }
 .light .diagnostics-heading h1 { color: #173b53; }
 .light .diagnostics li { border-color: #ebacb7; color: #9d1830; background: #fff1f3; }
