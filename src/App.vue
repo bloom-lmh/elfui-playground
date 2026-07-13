@@ -284,7 +284,51 @@ const projectModel = (file: PlaygroundFile): monaco.editor.ITextModel => {
   return model;
 };
 
+const syncProjectModels = () => files.value.forEach(projectModel);
+
 const activateFileModel = (file: PlaygroundFile) => editor?.setModel(projectModel(file));
+
+const formatTypeScriptMessage = (message: string | { messageText: string; next?: unknown[] }): string => {
+  if (typeof message === "string") return message;
+  const details = (message.next ?? [])
+    .map((next) => formatTypeScriptMessage(next as { messageText: string; next?: unknown[] }))
+    .filter(Boolean);
+  return [message.messageText, ...details].join("\n");
+};
+
+const collectTypeScriptDiagnostics = async (compileId: number): Promise<PlaygroundDiagnostic[]> => {
+  try {
+    syncProjectModels();
+    const workerFactory = await monaco.languages.typescript.getTypeScriptWorker();
+    if (compileId !== requestId) return [];
+    const models = files.value.map(projectModel);
+    const worker = await workerFactory(...models.map((model) => model.uri));
+    const grouped = await Promise.all(files.value.map(async (file) => {
+      const model = projectModel(file);
+      const [syntactic, semantic] = await Promise.all([
+        worker.getSyntacticDiagnostics(model.uri.toString()),
+        worker.getSemanticDiagnostics(model.uri.toString())
+      ]);
+      return [...syntactic, ...semantic]
+        .filter((diagnostic) => diagnostic.category === 0 || diagnostic.category === 1)
+        .map((diagnostic) => {
+          const position = model.getPositionAt(diagnostic.start ?? 0);
+          return {
+            code: `TS${diagnostic.code}`,
+            column: position.column,
+            filename: file.name,
+            line: position.lineNumber,
+            message: formatTypeScriptMessage(diagnostic.messageText),
+            severity: diagnostic.category === 0 ? "warning" : "error"
+          } satisfies PlaygroundDiagnostic;
+        });
+    }));
+    return grouped.flat();
+  } catch {
+    // Monaco still reports diagnostics in the editor if its language worker is unavailable.
+    return [];
+  }
+};
 
 const syncHash = () => {
   const url = new URL(window.location.href);
@@ -297,6 +341,7 @@ const replaceProject = (project: ProjectState) => {
   editorModels.clear();
   files.value = project.files;
   activeFileId.value = project.activeFileId;
+  syncProjectModels();
   activePreset.value = undefined;
   fileActionError.value = "";
   cancelRename();
@@ -402,6 +447,7 @@ const commitRename = (id: string) => {
     }
   }
   files.value = updatedFiles;
+  syncProjectModels();
   if (activeFileId.value === id) activateFileModel(updatedFiles.find((file) => file.id === id)!);
   fileActionError.value = "";
   cancelRename();
@@ -475,6 +521,7 @@ const loadPreset = (id: (typeof playgroundPresets)[number]["id"]) => {
     ? preset.project.files.map((file) => ({ ...file }))
     : [initialFile(preset.source)];
   activeFileId.value = preset.project?.activeFileId ?? files.value[0].id;
+  syncProjectModels();
   const selected = files.value.find((file) => file.id === activeFileId.value) ?? files.value[0];
   activateFileModel(selected);
   compileNow();
@@ -482,9 +529,13 @@ const loadPreset = (id: (typeof playgroundPresets)[number]["id"]) => {
 
 const receiveCompile = async ({ data }: MessageEvent<CompileResponse>) => {
   if (data.type !== "compiled" || data.id !== requestId) return;
-  diagnostics.value = data.diagnostics;
+  const typeDiagnostics = data.diagnostics.some((diagnostic) => diagnostic.severity === "error")
+    ? []
+    : await collectTypeScriptDiagnostics(data.id);
+  if (data.id !== requestId) return;
+  diagnostics.value = [...data.diagnostics, ...typeDiagnostics];
   updateEditorMarkers();
-  if (!data.files || !data.components || data.diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
+  if (!data.files || !data.components || diagnostics.value.some((diagnostic) => diagnostic.severity === "error")) {
     statusKind.value = "error";
     return;
   }
@@ -613,6 +664,7 @@ onMounted(() => {
     : shared?.source
       ? [initialFile(shared.source)]
       : fallbackProject.files;
+  syncProjectModels();
   activeFileId.value = files.value.some((file) => file.id === shared?.activeFileId)
     ? shared!.activeFileId!
     : shared?.source

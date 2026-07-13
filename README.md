@@ -22,7 +22,8 @@ Files run as separate browser ESM modules. Relative imports between project
 files resolve automatically, for example `import { Badge } from "./Badge"`
 will resolve `Badge.ts`. Monaco keeps project files as virtual TypeScript
 models, so navigation and diagnostics can follow local imports as the
-workspace changes.
+workspace changes. Syntactic and semantic TypeScript diagnostics also appear
+in the Playground diagnostics panel with a file and source position.
 
 ## Development
 
