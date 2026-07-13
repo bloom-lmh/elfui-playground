@@ -32,13 +32,29 @@ const toDiagnostic = (diagnostic: {
 const errorLocation = (source: string, error: unknown): Pick<PlaygroundDiagnostic, "column" | "line"> => {
   const loc = (error as { loc?: { start?: { offset?: number } } } | undefined)?.loc?.start;
   if (typeof loc?.offset !== "number") return {};
-  const templateStart = source.indexOf("html`");
+  const templateStart = source.search(/\bhtml\s*`/);
   if (templateStart < 0) return {};
-  const offset = templateStart + "html`".length + loc.offset;
+  const templateTag = source.slice(templateStart).match(/^html\s*`/)?.[0] ?? "html`";
+  const offset = templateStart + templateTag.length + loc.offset;
   const before = source.slice(0, offset);
   const line = before.split("\n").length;
   const column = before.length - before.lastIndexOf("\n");
   return { column, line };
+};
+
+const hasMacroTemplate = (source: string): boolean => {
+  const document = ts.createSourceFile("playground.ts", source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+  let found = false;
+  const visit = (node: ts.Node) => {
+    if (found) return;
+    if (ts.isTaggedTemplateExpression(node) && ts.isIdentifier(node.tag) && node.tag.text === "html") {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(document);
+  return found;
 };
 
 scope.onmessage = ({ data }: MessageEvent<CompileRequest>) => {
@@ -50,7 +66,7 @@ scope.onmessage = ({ data }: MessageEvent<CompileRequest>) => {
 
   for (const [index, file] of data.files.entries()) {
     try {
-      const isMacroModule = /\b(?:defineHtml|html)\b/.test(file.source);
+      const isMacroModule = hasMacroTemplate(file.source);
       let output = file.source;
 
       if (isMacroModule) {
