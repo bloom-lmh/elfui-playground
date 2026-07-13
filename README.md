@@ -9,10 +9,16 @@ project panel, switch between them, and copy the resulting URL to share the
 entire workspace. Every file is compiled in a Worker; the selected file is run
 inside the isolated preview.
 
+The default **Application** starter mirrors a real ElfUI project: `App.ts`
+exports a macro component and `main.ts` imports it and calls
+`createApp(App).mount("#app")`. Ordinary TypeScript entry modules are executed
+without being treated as macro components.
+
 Files run as separate browser ESM modules. Relative imports between project
 files resolve automatically, for example `import { Badge } from "./Badge"`
-will resolve `Badge.ts`. Cross-file language intelligence is planned for a
-later workspace iteration.
+will resolve `Badge.ts`. Monaco keeps project files as virtual TypeScript
+models, so navigation and diagnostics can follow local imports as the
+workspace changes.
 
 ## Development
 

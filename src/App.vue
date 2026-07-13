@@ -133,11 +133,18 @@ type EncodedState = {
   source?: string;
 };
 
-const initialFile = (source = playgroundPresets[0].source): PlaygroundFile => ({
+const initialFile = (source = playgroundPresets.find((preset) => preset.id === "counter")!.source): PlaygroundFile => ({
   id: "app",
   name: "App.ts",
   source
 });
+
+const initialProject = (): { activeFileId: string; files: PlaygroundFile[] } => {
+  const application = playgroundPresets.find((preset) => preset.id === "application")?.project;
+  return application
+    ? { activeFileId: application.activeFileId, files: application.files.map((file) => ({ ...file })) }
+    : { activeFileId: "app", files: [initialFile()] };
+};
 
 const normalizeProjectPath = (value: string) => value.replace(/\\/g, "/").replace(/^\.\//, "");
 
@@ -195,8 +202,9 @@ const statusKind = ref<"compiling" | "error" | "ready">("compiling");
 const shareLabel = ref("Copy link");
 const outputMode = ref<"preview" | "compiled">("preview");
 const compiledFiles = ref<CompiledPlaygroundFile[]>([]);
-const files = ref<PlaygroundFile[]>([initialFile()]);
-const activeFileId = ref(files.value[0].id);
+const startingProject = initialProject();
+const files = ref<PlaygroundFile[]>(startingProject.files);
+const activeFileId = ref(startingProject.activeFileId);
 const activeFile = computed(() => files.value.find((file) => file.id === activeFileId.value));
 const editingFileId = ref<string>();
 const fileNameDraft = ref("");
@@ -431,9 +439,12 @@ const loadPreset = (id: (typeof playgroundPresets)[number]["id"]) => {
   activePreset.value = id;
   editorModels.forEach((model) => model.dispose());
   editorModels.clear();
-  files.value = [initialFile(preset.source)];
-  activeFileId.value = files.value[0].id;
-  activateFileModel(files.value[0]);
+  files.value = preset.project
+    ? preset.project.files.map((file) => ({ ...file }))
+    : [initialFile(preset.source)];
+  activeFileId.value = preset.project?.activeFileId ?? files.value[0].id;
+  const selected = files.value.find((file) => file.id === activeFileId.value) ?? files.value[0];
+  activateFileModel(selected);
   compileNow();
 };
 
@@ -530,14 +541,23 @@ onMounted(() => {
     "file:///playground/node_modules/@elfui/core/index.d.ts"
   );
   const shared = decodeState();
-  files.value = shared?.files?.length ? shared.files : [initialFile(shared?.source)];
+  const fallbackProject = initialProject();
+  files.value = shared?.files?.length
+    ? shared.files
+    : shared?.source
+      ? [initialFile(shared.source)]
+      : fallbackProject.files;
   activeFileId.value = files.value.some((file) => file.id === shared?.activeFileId)
     ? shared!.activeFileId!
-    : files.value[0].id;
+    : shared?.source
+      ? files.value[0].id
+      : fallbackProject.activeFileId;
   const restoredFile = files.value.find((file) => file.id === activeFileId.value) ?? files.value[0];
-  activePreset.value = files.value.length === 1
-    ? presets.find((preset) => preset.source === restoredFile.source)?.id
-    : undefined;
+  activePreset.value = !shared
+    ? "application"
+    : files.value.length === 1
+      ? presets.find((preset) => preset.source === restoredFile.source)?.id
+      : undefined;
   const restoredModel = projectModel(restoredFile);
   editor = monaco.editor.create(editorRoot.value ?? document.body, {
     automaticLayout: true,

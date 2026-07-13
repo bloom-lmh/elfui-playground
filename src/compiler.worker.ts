@@ -50,18 +50,25 @@ scope.onmessage = ({ data }: MessageEvent<CompileRequest>) => {
 
   for (const [index, file] of data.files.entries()) {
     try {
-      const compiled = compileMacroComponent(file.source, {
-        filename: file.name,
-        macroImport: "@elfui/core",
-        tagPrefix: `elf-play-${data.id}-${index}`,
-        // Browser template type checking becomes available with Language Tools.
-        templateTypeCheck: false
-      });
-      const fileDiagnostics = compiled.diagnostics.map((diagnostic) => toDiagnostic(diagnostic, file.name));
-      diagnostics.push(...fileDiagnostics);
-      if (fileDiagnostics.some((diagnostic) => diagnostic.severity === "error")) continue;
+      const isMacroModule = /\b(?:defineHtml|html)\b/.test(file.source);
+      let output = file.source;
 
-      const transpiled = ts.transpileModule(compiled.code, {
+      if (isMacroModule) {
+        const compiled = compileMacroComponent(file.source, {
+          filename: file.name,
+          macroImport: "@elfui/core",
+          tagPrefix: `elf-play-${data.id}-${index}`,
+          // Browser template type checking becomes available with Language Tools.
+          templateTypeCheck: false
+        });
+        const fileDiagnostics = compiled.diagnostics.map((diagnostic) => toDiagnostic(diagnostic, file.name));
+        diagnostics.push(...fileDiagnostics);
+        if (fileDiagnostics.some((diagnostic) => diagnostic.severity === "error")) continue;
+        output = compiled.code;
+        components.push(...compiled.components.map(({ exportName, name }) => ({ exportName, fileId: file.id, name })));
+      }
+
+      const transpiled = ts.transpileModule(output, {
         compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
         reportDiagnostics: true
       });
@@ -75,7 +82,6 @@ scope.onmessage = ({ data }: MessageEvent<CompileRequest>) => {
       if (transpileDiagnostics.length) continue;
 
       files.push({ code: transpiled.outputText, id: file.id, name: file.name });
-      components.push(...compiled.components.map(({ exportName, name }) => ({ exportName, fileId: file.id, name })));
     } catch (error) {
       diagnostics.push({
         code: "ELF_PLAYGROUND_COMPILE",

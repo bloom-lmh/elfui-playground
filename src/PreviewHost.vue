@@ -1,6 +1,6 @@
 <template>
   <main class="preview-host">
-    <div ref="mount" class="preview-mount"></div>
+    <div id="app" ref="mount" class="preview-mount"></div>
     <p v-if="message" class="preview-message">{{ message }}</p>
   </main>
 </template>
