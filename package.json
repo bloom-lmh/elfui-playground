@@ -1,0 +1,25 @@
+{
+  "name": "elfui-playground",
+  "version": "0.1.0-beta.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@elfui/compiler": "0.1.0-beta.1",
+    "@elfui/core": "0.1.0-beta.1",
+    "@elfui/runtime": "0.1.0-beta.1",
+    "monaco-editor": "^0.53.0",
+    "typescript": "^5.9.3",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "@vitejs/plugin-vue": "^5.2.4",
+    "vite": "^6.1.0",
+    "vue-tsc": "^2.2.0"
+  }
+}
