@@ -948,10 +948,21 @@ const downloadProject = async () => {
     for (const file of files.value) zip.file(file.name, file.source);
 
     const entryPath = `/${entry.name.split("/").map(encodeURIComponent).join("/")}`;
+    const entryRunsApp = /\bcreateApp\s*\(/.test(entry.source);
+    const downloadEntryPath = entryRunsApp ? entryPath : "/__playground-entry.ts";
     const externalImports = { ...imports.value };
     const importMapTag = Object.keys(externalImports).length
       ? `    <script type="importmap">${JSON.stringify({ imports: externalImports })}<${"/"}script>\n`
       : "";
+    if (!entryRunsApp) {
+      zip.file("__playground-entry.ts", `import { createApp } from "@elfui/core";
+import * as entry from ${JSON.stringify(`./${entry.name}`)};
+
+const component = entry.App ?? Object.getOwnPropertyDescriptor(entry, "default")?.value;
+if (!component) throw new Error("The selected Playground entry must export App or a default component.");
+createApp(component).mount("#app");
+`);
+    }
     zip.file("index.html", `<!doctype html>
 <html lang="en">
   <head>
@@ -962,7 +973,7 @@ const downloadProject = async () => {
   <body>
     <div id="app"></div>
 ${importMapTag}
-    <script type="module" src="${entryPath}"><${"/"}script>
+    <script type="module" src="${downloadEntryPath}"><${"/"}script>
   </body>
 </html>
 `);
@@ -970,12 +981,31 @@ ${importMapTag}
 import { elfuiMacroPlugin } from "@elfui/compiler/vite";
 
 const externalImports = ${JSON.stringify(externalImports, null, 2)};
+let isDev = false;
+const resolveExternalImport = (id: string): string | undefined => {
+  if (externalImports[id]) return externalImports[id];
+  const prefix = Object.keys(externalImports)
+    .filter((key) => key.endsWith("/") && id.startsWith(key))
+    .sort((left, right) => right.length - left.length)[0];
+  return prefix ? externalImports[prefix] + id.slice(prefix.length) : undefined;
+};
+
 const importMapPlugin = (): Plugin => ({
   name: "elfui-playground:import-map",
+  enforce: "pre",
+  configResolved(config) {
+    isDev = config.command === "serve";
+  },
+  transform(code, id) {
+    if (!isDev || !/\\.[cm]?[jt]sx?$/.test(id)) return null;
+    const rewritten = code.replace(/(\\bfrom\\s*["']|\\bimport\\s*["'])([^"']+)(["'])/g, (match, start, specifier, end) => {
+      const external = resolveExternalImport(specifier);
+      return external ? start + external + end : match;
+    });
+    return rewritten === code ? null : { code: rewritten, map: null };
+  },
   resolveId(id) {
-    return externalImports[id] || Object.keys(externalImports).some((key) => key.endsWith("/") && id.startsWith(key))
-      ? { id, external: true }
-      : null;
+    return !isDev && resolveExternalImport(id) ? { id, external: true } : null;
   }
 });
 
@@ -1023,6 +1053,7 @@ pnpm dev
 
 The generated Vite configuration enables ElfUI's TypeScript macro compiler.
 The current entry module is \`${entry.name}\`.
+${entryRunsApp ? "" : "\nThe generated `__playground-entry.ts` mounts the entry's `App` (or default) component.\n"}
 ${Object.keys(externalImports).length ? "\nThe generated `index.html` also includes the Playground Import Map for external ESM packages.\n" : ""}`);
     zip.file("elfui-playground.json", JSON.stringify(projectSnapshot(), null, 2));
     if (Object.keys(externalImports).length) zip.file("import-map.json", JSON.stringify(externalImports, null, 2));

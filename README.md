@@ -21,6 +21,9 @@ Monaco models and preview are replaced.
 Use **Download** to generate `elfui-playground-project.zip`: it contains every
 TypeScript file, a Vite setup with the ElfUI macro plugin, the selected entry
 module, and an `elfui-playground.json` snapshot for later re-import.
+When the selected entry exports a component instead of calling `createApp`, the
+download also includes a small generated bootstrap module so the project runs
+immediately.
 
 Use **Imports** to configure a shareable Import Map for external HTTP(S) ESM
 packages. Exact names and prefix names ending in `/` are supported. The map is
