@@ -139,6 +139,47 @@ const initialFile = (source = playgroundPresets[0].source): PlaygroundFile => ({
   source
 });
 
+const normalizeProjectPath = (value: string) => value.replace(/\\/g, "/").replace(/^\.\//, "");
+
+const resolveLocalImport = (from: string, specifier: string, project: PlaygroundFile[]): PlaygroundFile | undefined => {
+  const fromParts = normalizeProjectPath(from).split("/");
+  fromParts.pop();
+  const normalized: string[] = [];
+
+  for (const part of [...fromParts, ...specifier.split("/")]) {
+    if (!part || part === ".") continue;
+    if (part === "..") normalized.pop();
+    else normalized.push(part);
+  }
+
+  const path = normalized.join("/");
+  return project.find((file) => [path, `${path}.ts`, `${path}/index.ts`].includes(normalizeProjectPath(file.name)));
+};
+
+const relativeImport = (from: string, target: string, includeExtension: boolean): string => {
+  const fromParts = normalizeProjectPath(from).split("/");
+  fromParts.pop();
+  const targetParts = normalizeProjectPath(target).split("/");
+  while (fromParts[0] && fromParts[0] === targetParts[0]) {
+    fromParts.shift();
+    targetParts.shift();
+  }
+  const path = [...fromParts.map(() => ".."), ...targetParts].join("/") || ".";
+  const withPrefix = path.startsWith(".") ? path : `./${path}`;
+  return includeExtension ? withPrefix : withPrefix.replace(/\.ts$/, "");
+};
+
+const updateImportsForRename = (project: PlaygroundFile[], renamedId: string, renamedName: string): PlaygroundFile[] => project.map((file) => {
+  const nextName = file.id === renamedId ? renamedName : file.name;
+  const source = file.source.replace(/(\b(?:from|import)\s*["'])(\.{1,2}\/[^"']+)(["'])/g, (match, start, specifier, end) => {
+    const target = resolveLocalImport(file.name, specifier, project);
+    if (!target || (file.id !== renamedId && target.id !== renamedId)) return match;
+    const targetName = target.id === renamedId ? renamedName : target.name;
+    return `${start}${relativeImport(nextName, targetName, specifier.endsWith(".ts"))}${end}`;
+  });
+  return { ...file, name: nextName, source };
+});
+
 (self as typeof self & { MonacoEnvironment?: { getWorker: (_: string, label: string) => Worker } }).MonacoEnvironment = {
   getWorker: (_, label) => label === "typescript" || label === "javascript" ? new TypeScriptWorker() : new EditorWorker()
 };
@@ -312,11 +353,16 @@ const commitRename = (id: string) => {
   }
   if (name === current.name) return cancelRename();
 
-  const renamed = { ...current, name };
-  editorModels.get(id)?.dispose();
-  editorModels.delete(id);
-  files.value = files.value.map((file) => file.id === id ? renamed : file);
-  if (activeFileId.value === id) activateFileModel(renamed);
+  const updatedFiles = updateImportsForRename(files.value, id, name);
+  for (const file of updatedFiles) {
+    const previous = files.value.find((candidate) => candidate.id === file.id);
+    if (!previous || previous.name !== file.name || previous.source !== file.source) {
+      editorModels.get(file.id)?.dispose();
+      editorModels.delete(file.id);
+    }
+  }
+  files.value = updatedFiles;
+  if (activeFileId.value === id) activateFileModel(updatedFiles.find((file) => file.id === id)!);
   fileActionError.value = "";
   cancelRename();
   compileNow();
