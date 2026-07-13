@@ -9,6 +9,10 @@ project panel, switch between them, and copy the resulting URL to share the
 entire workspace. Every file is compiled in a Worker; the selected file is run
 inside the isolated preview.
 
+File names may include relative folders such as `components/Button.ts`. The
+project panel renders those paths as a collapsible tree and normalizes repeated
+path separators when a file is renamed.
+
 Use **Export** to save the entire workspace as `elfui-playground.json`, and
 **Import** to restore it later. Imported projects are validated before their
 Monaco models and preview are replaced.

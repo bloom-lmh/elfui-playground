@@ -19,35 +19,48 @@
       <aside class="file-panel">
         <div class="panel-heading"><span>PROJECT</span><button type="button" title="New component file" @click="createFile">+</button></div>
         <div class="file-list">
-          <div v-for="file in files" :key="file.id" class="file-entry">
+          <template v-for="item in projectTreeItems" :key="item.id">
             <button
-              v-if="editingFileId !== file.id"
-              :class="['file-row', { active: activeFileId === file.id }]"
+              v-if="item.kind === 'folder'"
+              class="folder-row"
               type="button"
-              @click="openFile(file.id)"
-              @dblclick="startRename(file)"
+              :aria-expanded="!item.collapsed"
+              :style="{ paddingLeft: `${14 + item.depth * 16}px` }"
+              @click="toggleFolder(item.id)"
             >
-              <span class="file-mark">TS</span>{{ file.name }}
+              <span aria-hidden="true">{{ item.collapsed ? '›' : '⌄' }}</span>{{ item.name }}
             </button>
-            <input
-              v-else
-              v-model="fileNameDraft"
-              ref="renameInputs"
-              class="rename-file"
-              :aria-label="`Rename ${file.name}`"
-              @blur="commitRename(file.id)"
-              @keydown.enter.prevent="commitRename(file.id)"
-              @keydown.esc.prevent="cancelRename"
-            />
-            <button v-if="editingFileId !== file.id" type="button" class="rename-file-button" title="Rename file" @click="startRename(file)">Rename</button>
-            <button
-              v-if="files.length > 1 && editingFileId !== file.id"
-              type="button"
-              class="delete-file"
-              :title="`Delete ${file.name}`"
-              @click="deleteFile(file.id)"
-            >×</button>
-          </div>
+            <div v-else class="file-entry">
+              <button
+                v-if="editingFileId !== item.file.id"
+                :class="['file-row', { active: activeFileId === item.file.id }]"
+                :style="{ paddingLeft: `${14 + item.depth * 16}px` }"
+                type="button"
+                @click="openFile(item.file.id)"
+                @dblclick="startRename(item.file)"
+              >
+                <span class="file-mark">TS</span>{{ item.file.name.split('/').at(-1) }}
+              </button>
+              <input
+                v-else
+                v-model="fileNameDraft"
+                ref="renameInputs"
+                class="rename-file"
+                :aria-label="`Rename ${item.file.name}`"
+                @blur="commitRename(item.file.id)"
+                @keydown.enter.prevent="commitRename(item.file.id)"
+                @keydown.esc.prevent="cancelRename"
+              />
+              <button v-if="editingFileId !== item.file.id" type="button" class="rename-file-button" title="Rename file" @click="startRename(item.file)">Rename</button>
+              <button
+                v-if="files.length > 1 && editingFileId !== item.file.id"
+                type="button"
+                class="delete-file"
+                :title="`Delete ${item.file.name}`"
+                @click="deleteFile(item.file.id)"
+              >×</button>
+            </div>
+          </template>
         </div>
         <p v-if="fileActionError" class="file-action-error">{{ fileActionError }}</p>
         <div class="preset-section">
@@ -146,6 +159,15 @@ type EncodedState = {
   source?: string;
 };
 
+type ProjectTreeItem =
+  | { collapsed: boolean; depth: number; id: string; kind: "folder"; name: string }
+  | { depth: number; file: PlaygroundFile; id: string; kind: "file" };
+
+type ProjectTreeFolder = {
+  files: PlaygroundFile[];
+  folders: Map<string, ProjectTreeFolder>;
+};
+
 const initialFile = (source = playgroundPresets.find((preset) => preset.id === "counter")!.source): PlaygroundFile => ({
   id: "app",
   name: "App.ts",
@@ -164,6 +186,10 @@ const initialProject = (): { activeFileId: string; entryFileId: string; files: P
 };
 
 const normalizeProjectPath = (value: string) => value.replace(/\\/g, "/").replace(/^\.\//, "");
+
+const isValidProjectPath = (value: string): boolean =>
+  value.endsWith(".ts") && !value.includes("..") && !value.includes("\\") && !value.startsWith("/") &&
+  value.split("/").every((segment) => Boolean(segment) && segment !== ".");
 
 const resolveLocalImport = (from: string, specifier: string, project: PlaygroundFile[]): PlaygroundFile | undefined => {
   const fromParts = normalizeProjectPath(from).split("/");
@@ -227,6 +253,7 @@ const files = ref<PlaygroundFile[]>(startingProject.files);
 const activeFileId = ref(startingProject.activeFileId);
 const entryFileId = ref(startingProject.entryFileId);
 const activeFile = computed(() => files.value.find((file) => file.id === activeFileId.value));
+const collapsedFolders = ref<Set<string>>(new Set());
 const editingFileId = ref<string>();
 const fileNameDraft = ref("");
 const fileActionError = ref("");
@@ -242,11 +269,53 @@ const editorModels = new Map<string, monaco.editor.ITextModel>();
 
 const previewUrl = computed(() => `${previewOrigin.value}/preview?run=${previewKey.value}`);
 const compiledSource = computed(() => compiledFiles.value.find((file) => file.id === activeFileId.value)?.code ?? "");
+const projectTreeItems = computed<ProjectTreeItem[]>(() => {
+  const root: ProjectTreeFolder = { files: [], folders: new Map() };
+
+  for (const file of files.value) {
+    const parts = normalizeProjectPath(file.name).split("/");
+    const filename = parts.pop();
+    if (!filename) continue;
+    let folder = root;
+    for (const part of parts) {
+      let next = folder.folders.get(part);
+      if (!next) {
+        next = { files: [], folders: new Map() };
+        folder.folders.set(part, next);
+      }
+      folder = next;
+    }
+    folder.files.push(file);
+  }
+
+  const items: ProjectTreeItem[] = [];
+  const visit = (folder: ProjectTreeFolder, path: string, depth: number) => {
+    for (const [name, child] of [...folder.folders.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+      const id = path ? `${path}/${name}` : name;
+      const collapsed = collapsedFolders.value.has(id);
+      items.push({ collapsed, depth, id, kind: "folder", name });
+      if (!collapsed) visit(child, id, depth + 1);
+    }
+    for (const file of [...folder.files].sort((left, right) => left.name.localeCompare(right.name))) {
+      items.push({ depth, file, id: file.id, kind: "file" });
+    }
+  };
+
+  visit(root, "", 0);
+  return items;
+});
 const statusLabel = computed(() => {
   if (statusKind.value === "compiling") return "Compiling";
   if (statusKind.value === "error") return "Error";
   return "Running";
 });
+
+const toggleFolder = (id: string) => {
+  const next = new Set(collapsedFolders.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  collapsedFolders.value = next;
+};
 
 const encodeState = (state: EncodedState): string => {
   const json = JSON.stringify(state);
@@ -260,7 +329,7 @@ const parseProjectState = (state: EncodedState): ProjectState | undefined => {
   if (!state.files.every((file): file is PlaygroundFile =>
     typeof file?.id === "string" && file.id.length > 0 && file.id.length <= 100 &&
     typeof file.name === "string" && file.name.length > 0 && file.name.length <= 240 &&
-    file.name.endsWith(".ts") && !file.name.includes("..") && !file.name.includes("\\") && !file.name.startsWith("/") &&
+    isValidProjectPath(file.name) &&
     typeof file.source === "string" && file.source.length <= 500_000
   )) return undefined;
   if (new Set(state.files.map((file) => file.id)).size !== state.files.length) return undefined;
@@ -474,10 +543,10 @@ const commitRename = (id: string) => {
 
   const current = files.value.find((file) => file.id === id);
   if (!current) return cancelRename();
-  const rawName = fileNameDraft.value.trim().replace(/^\.\/+/, "");
+  const rawName = fileNameDraft.value.trim().replace(/^\.\/+/, "").replace(/\/{2,}/g, "/");
   const name = rawName.endsWith(".ts") ? rawName : `${rawName}.ts`;
-  if (!rawName || name.includes("..") || name.startsWith("/")) {
-    fileActionError.value = "Use a relative TypeScript filename without parent traversal.";
+  if (!rawName || !isValidProjectPath(name)) {
+    fileActionError.value = "Use a relative TypeScript filename with valid path segments.";
     return;
   }
   if (files.value.some((file) => file.id !== id && file.name === name)) {
@@ -800,6 +869,9 @@ onBeforeUnmount(() => {
 .panel-heading { justify-content: space-between; }
 .panel-heading button { border: 0; color: #72adc9; background: transparent; font-size: 18px; cursor: pointer; }
 .file-entry { display: flex; align-items: stretch; }
+.folder-row { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 30px; border: 0; color: #6f8da3; background: transparent; text-align: left; font: 750 10px/1 Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .06em; cursor: pointer; }
+.folder-row:hover { color: #b7d6e5; background: #0b1d2d; }
+.folder-row span { width: 8px; color: #4dcbbe; font-size: 15px; }
 .file-row { display: flex; flex: 1; align-items: center; gap: 8px; width: 100%; min-width: 0; min-height: 35px; padding: 0 14px; border: 0; border-left: 2px solid transparent; color: #9fb8ca; background: transparent; text-align: left; font: 650 12px/1 "JetBrains Mono", ui-monospace, monospace; }
 .file-row.active { border-left-color: #45d8cf; color: #effaff; background: #0e2233; }
 .file-mark { color: #49d9ca; font-size: 9px; font-weight: 900; }
