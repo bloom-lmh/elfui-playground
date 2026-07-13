@@ -9,6 +9,7 @@
         <button type="button" class="quiet-button" @click="copyShareLink">{{ shareLabel }}</button>
         <button type="button" class="quiet-button" @click="exportProject">{{ exportLabel }}</button>
         <button type="button" class="quiet-button" @click="downloadProject">{{ downloadLabel }}</button>
+        <button type="button" class="quiet-button" @click="openImportMap">Imports{{ Object.keys(imports).length ? ` (${Object.keys(imports).length})` : "" }}</button>
         <button type="button" class="quiet-button" @click="importInput?.click()">{{ importLabel }}</button>
         <input ref="importInput" hidden type="file" accept="application/json,.json" @change="importProject" />
         <a class="quiet-button docs-link" href="https://github.com/bloom-lmh/elfui-docs">Documentation</a>
@@ -17,6 +18,25 @@
         </button>
       </div>
     </header>
+
+    <div v-if="importsOpen" class="import-map-backdrop" @click.self="importsOpen = false">
+      <section class="import-map-dialog" role="dialog" aria-modal="true" aria-labelledby="import-map-title" @keydown.esc="importsOpen = false">
+        <div class="import-map-heading">
+          <div>
+            <p>DEPENDENCIES</p>
+            <h1 id="import-map-title">Import map</h1>
+          </div>
+          <button type="button" aria-label="Close import map" @click="importsOpen = false">×</button>
+        </div>
+        <p>Map a package name to an absolute HTTP(S) ESM URL. Prefix keys ending in <code>/</code> support subpaths and must point to a URL ending in <code>/</code>.</p>
+        <textarea v-model="importsDraft" aria-label="Import map JSON" spellcheck="false"></textarea>
+        <p v-if="importMapError" class="import-map-error">{{ importMapError }}</p>
+        <div class="import-map-actions">
+          <button type="button" class="quiet-button" @click="importsOpen = false">Cancel</button>
+          <button type="button" class="run-button" @click="applyImportMap">Apply imports</button>
+        </div>
+      </section>
+    </div>
 
     <section class="workspace" aria-label="ElfUI component playground">
       <aside class="file-panel">
@@ -158,6 +178,7 @@ import type {
   CompileResponse,
   PlaygroundDiagnostic,
   PlaygroundFile,
+  PlaygroundImportMap,
   PlaygroundTheme,
   PreviewConsoleMessage,
   PreviewLogLevel,
@@ -171,6 +192,7 @@ type EncodedState = {
   activeFileId?: string;
   entryFileId?: string;
   files?: PlaygroundFile[];
+  imports?: PlaygroundImportMap;
   version?: 1;
   // Supports links made by the former single-file Playground.
   source?: string;
@@ -193,15 +215,16 @@ const initialFile = (source = playgroundPresets.find((preset) => preset.id === "
   source
 });
 
-const initialProject = (): { activeFileId: string; entryFileId: string; files: PlaygroundFile[] } => {
+const initialProject = (): { activeFileId: string; entryFileId: string; files: PlaygroundFile[]; imports: PlaygroundImportMap } => {
   const application = playgroundPresets.find((preset) => preset.id === "application")?.project;
   return application
     ? {
         activeFileId: application.activeFileId,
         entryFileId: application.entryFileId,
-        files: application.files.map((file) => ({ ...file }))
+        files: application.files.map((file) => ({ ...file })),
+        imports: {}
       }
-    : { activeFileId: "app", entryFileId: "app", files: [initialFile()] };
+    : { activeFileId: "app", entryFileId: "app", files: [initialFile()], imports: {} };
 };
 
 const initialAutoSave = (): boolean => {
@@ -225,6 +248,29 @@ const normalizeProjectPath = (value: string) => value.replace(/\\/g, "/").replac
 const isValidProjectPath = (value: string): boolean =>
   value.endsWith(".ts") && !value.includes("..") && !value.includes("\\") && !value.startsWith("/") &&
   value.split("/").every((segment) => Boolean(segment) && segment !== ".");
+
+const normalizeImportMap = (value: unknown): PlaygroundImportMap | undefined => {
+  if (value === undefined) return {};
+  if (!value || Array.isArray(value) || typeof value !== "object") return undefined;
+  const entries = Object.entries(value);
+  if (entries.length > 64) return undefined;
+  const imports: PlaygroundImportMap = {};
+  for (const [specifier, target] of entries) {
+    if (!specifier || specifier.length > 240 || /\s/.test(specifier) || typeof target !== "string" || target.length > 2_000) return undefined;
+    try {
+      const url = new URL(target);
+      if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+      if (specifier.endsWith("/") && !url.href.endsWith("/")) return undefined;
+      imports[specifier] = url.href;
+    } catch {
+      return undefined;
+    }
+  }
+  return imports;
+};
+
+const hasImportMapping = (specifier: string, imports: PlaygroundImportMap): boolean =>
+  Boolean(imports[specifier]) || Object.keys(imports).some((key) => key.endsWith("/") && specifier.startsWith(key));
 
 const resolveLocalImport = (from: string, specifier: string, project: PlaygroundFile[]): PlaygroundFile | undefined => {
   const fromParts = normalizeProjectPath(from).split("/");
@@ -292,6 +338,10 @@ const startingProject = initialProject();
 const files = ref<PlaygroundFile[]>(startingProject.files);
 const activeFileId = ref(startingProject.activeFileId);
 const entryFileId = ref(startingProject.entryFileId);
+const imports = ref<PlaygroundImportMap>({ ...startingProject.imports });
+const importsOpen = ref(false);
+const importsDraft = ref("{}");
+const importMapError = ref("");
 const activeFile = computed(() => files.value.find((file) => file.id === activeFileId.value));
 const collapsedFolders = ref<Set<string>>(new Set());
 const editingFileId = ref<string>();
@@ -374,7 +424,7 @@ const encodeState = (state: EncodedState): string => {
   return btoa(encodeURIComponent(json).replace(/%([0-9A-F]{2})/g, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16))));
 };
 
-type ProjectState = Required<Pick<EncodedState, "activeFileId" | "entryFileId" | "files">>;
+type ProjectState = Required<Pick<EncodedState, "activeFileId" | "entryFileId" | "files" | "imports">>;
 
 const parseProjectState = (state: EncodedState): ProjectState | undefined => {
   if (!Array.isArray(state.files) || state.files.length === 0 || state.files.length > 64) return undefined;
@@ -386,13 +436,15 @@ const parseProjectState = (state: EncodedState): ProjectState | undefined => {
   )) return undefined;
   if (new Set(state.files.map((file) => file.id)).size !== state.files.length) return undefined;
   if (new Set(state.files.map((file) => file.name)).size !== state.files.length) return undefined;
+  const imports = normalizeImportMap(state.imports);
+  if (!imports) return undefined;
   const activeFileId = state.files.some((file) => file.id === state.activeFileId)
     ? state.activeFileId!
     : state.files[0].id;
   const entryFileId = state.files.some((file) => file.id === state.entryFileId)
     ? state.entryFileId!
     : activeFileId;
-  return { activeFileId, entryFileId, files: state.files.map((file) => ({ ...file })) };
+  return { activeFileId, entryFileId, files: state.files.map((file) => ({ ...file })), imports };
 };
 
 const decodeState = (): EncodedState | undefined => {
@@ -454,6 +506,9 @@ const macroTemplateRanges = (source: string): Array<{ end: number; start: number
   return ranges;
 };
 
+const unresolvedModuleFromDiagnostic = (message: string): string | undefined =>
+  message.match(/Cannot find module ['"]([^'"]+)['"]/i)?.[1];
+
 const collectTypeScriptDiagnostics = async (compileId: number): Promise<PlaygroundDiagnostic[]> => {
   try {
     syncProjectModels();
@@ -474,6 +529,10 @@ const collectTypeScriptDiagnostics = async (compileId: number): Promise<Playgrou
         // TypeScript parser can mistake the embedded HTML for TS after a model swap.
         .filter((diagnostic) => !templateRanges.some((range) =>
           (diagnostic.start ?? 0) >= range.start && (diagnostic.start ?? 0) <= range.end
+        ))
+        .filter((diagnostic) => diagnostic.code !== 2307 || !hasImportMapping(
+          unresolvedModuleFromDiagnostic(formatTypeScriptMessage(diagnostic.messageText)) ?? "",
+          imports.value
         ))
         .map((diagnostic) => {
           const position = model.getPositionAt(diagnostic.start ?? 0);
@@ -501,6 +560,7 @@ const syncHash = (force = false) => {
     activeFileId: activeFileId.value,
     entryFileId: entryFileId.value,
     files: files.value,
+    imports: imports.value,
     version: 1
   }) }).toString();
   window.history.replaceState({}, "", url);
@@ -534,6 +594,25 @@ const toggleTheme = () => {
   sendPreviewTheme();
 };
 
+const openImportMap = () => {
+  importsDraft.value = JSON.stringify(imports.value, null, 2);
+  importMapError.value = "";
+  importsOpen.value = true;
+};
+
+const applyImportMap = () => {
+  try {
+    const next = normalizeImportMap(JSON.parse(importsDraft.value));
+    if (!next) throw new Error("Use a JSON object of package names and absolute HTTP(S) ESM URLs.");
+    imports.value = next;
+    importsOpen.value = false;
+    importMapError.value = "";
+    compileNow();
+  } catch (error) {
+    importMapError.value = error instanceof Error ? error.message : "Unable to apply Import map.";
+  }
+};
+
 const replaceProject = (project: ProjectState) => {
   editorModels.forEach((model) => model.dispose());
   editorModels.clear();
@@ -541,6 +620,7 @@ const replaceProject = (project: ProjectState) => {
   files.value = project.files;
   activeFileId.value = project.activeFileId;
   entryFileId.value = project.entryFileId;
+  imports.value = { ...project.imports };
   syncProjectModels();
   activePreset.value = undefined;
   fileActionError.value = "";
@@ -726,6 +806,7 @@ const loadPreset = (id: (typeof playgroundPresets)[number]["id"]) => {
     : [initialFile(preset.source)];
   activeFileId.value = preset.project?.activeFileId ?? files.value[0].id;
   entryFileId.value = preset.project?.entryFileId ?? activeFileId.value;
+  imports.value = {};
   syncProjectModels();
   const selected = files.value.find((file) => file.id === activeFileId.value) ?? files.value[0];
   activateFileModel(selected);
@@ -759,6 +840,7 @@ const sendPreview = () => {
       components: pendingPreview.components,
       files: pendingPreview.files,
       id: pendingPreview.id,
+      imports: { ...imports.value },
       theme: theme.value,
       type: "elfui-playground:run"
     },
@@ -819,6 +901,7 @@ const projectSnapshot = () => ({
     activeFileId: activeFileId.value,
     entryFileId: entryFileId.value,
     files: files.value,
+    imports: imports.value,
     version: 1
   } satisfies EncodedState);
 
@@ -850,6 +933,10 @@ const downloadProject = async () => {
     for (const file of files.value) zip.file(file.name, file.source);
 
     const entryPath = `/${entry.name.split("/").map(encodeURIComponent).join("/")}`;
+    const externalImports = { ...imports.value };
+    const importMapTag = Object.keys(externalImports).length
+      ? `    <script type="importmap">${JSON.stringify({ imports: externalImports })}<${"/"}script>\n`
+      : "";
     zip.file("index.html", `<!doctype html>
 <html lang="en">
   <head>
@@ -859,15 +946,26 @@ const downloadProject = async () => {
   </head>
   <body>
     <div id="app"></div>
+${importMapTag}
     <script type="module" src="${entryPath}"><${"/"}script>
   </body>
 </html>
 `);
-    zip.file("vite.config.ts", `import { defineConfig } from "vite";
+    zip.file("vite.config.ts", `import { defineConfig, type Plugin } from "vite";
 import { elfuiMacroPlugin } from "@elfui/compiler/vite";
 
+const externalImports = ${JSON.stringify(externalImports, null, 2)};
+const importMapPlugin = (): Plugin => ({
+  name: "elfui-playground:import-map",
+  resolveId(id) {
+    return externalImports[id] || Object.keys(externalImports).some((key) => key.endsWith("/") && id.startsWith(key))
+      ? { id, external: true }
+      : null;
+  }
+});
+
 export default defineConfig({
-  plugins: [elfuiMacroPlugin({ macroImport: "@elfui/core", runtimeImport: "@elfui/core" })]
+  plugins: [importMapPlugin(), elfuiMacroPlugin({ macroImport: "@elfui/core", runtimeImport: "@elfui/core" })]
 });
 `);
     zip.file("tsconfig.json", `${JSON.stringify({
@@ -910,8 +1008,9 @@ pnpm dev
 
 The generated Vite configuration enables ElfUI's TypeScript macro compiler.
 The current entry module is \`${entry.name}\`.
-`);
+${Object.keys(externalImports).length ? "\nThe generated `index.html` also includes the Playground Import Map for external ESM packages.\n" : ""}`);
     zip.file("elfui-playground.json", JSON.stringify(projectSnapshot(), null, 2));
+    if (Object.keys(externalImports).length) zip.file("import-map.json", JSON.stringify(externalImports, null, 2));
 
     downloadBlob(
       await zip.generateAsync({ compression: "DEFLATE", compressionOptions: { level: 6 }, type: "blob" }),
@@ -1010,6 +1109,7 @@ onMounted(() => {
     : shared?.source
       ? [initialFile(shared.source)]
       : fallbackProject.files;
+  imports.value = shared?.imports ? { ...shared.imports } : { ...fallbackProject.imports };
   syncProjectModels();
   activeFileId.value = files.value.some((file) => file.id === shared?.activeFileId)
     ? shared!.activeFileId!
@@ -1070,6 +1170,18 @@ onBeforeUnmount(() => {
 .quiet-button:hover { border-color: #4380a2; color: #e7f8ff; }
 .run-button { border-color: #32c7bf; color: #052125; background: #45d8cf; }
 .run-button span { margin-right: 5px; font-size: 10px; }
+.import-map-backdrop { position: fixed; z-index: 20; inset: 0; display: grid; place-items: center; padding: 20px; background: #020914aa; }
+.import-map-dialog { width: min(680px, 100%); border: 1px solid #2b526b; border-radius: 8px; box-shadow: 0 24px 80px #0008; color: #c8ddeb; background: #081726; }
+.import-map-heading { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px; border-bottom: 1px solid #193044; }
+.import-map-heading p { margin: 0 0 6px; color: #4ed4c8; font: 800 10px/1 Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .13em; }
+.import-map-heading h1 { margin: 0; color: #effaff; font: 750 20px/1 Inter, ui-sans-serif, system-ui, sans-serif; }
+.import-map-heading button { border: 0; color: #85a5ba; background: transparent; font-size: 24px; cursor: pointer; }
+.import-map-dialog > p { margin: 16px 20px 10px; color: #91adbf; font-size: 12px; line-height: 1.55; }
+.import-map-dialog > p code { color: #53ded1; }
+.import-map-dialog textarea { display: block; width: calc(100% - 40px); min-height: 230px; margin: 0 20px; padding: 13px; resize: vertical; border: 1px solid #2b526b; border-radius: 5px; outline: 0; color: #d9ecf7; background: #06121f; font: 12px/1.6 "JetBrains Mono", ui-monospace, monospace; }
+.import-map-dialog textarea:focus { border-color: #45d8cf; }
+.import-map-dialog .import-map-error { color: #ff9fab; }
+.import-map-actions { display: flex; justify-content: flex-end; gap: 9px; padding: 18px 20px; }
 .workspace { display: grid; grid-template-columns: 220px minmax(440px, 1.12fr) minmax(360px, .88fr); min-height: calc(100vh - 64px - 132px); }
 .file-panel, .editor-area, .preview-area { min-width: 0; border-right: 1px solid #193044; }
 .file-panel { display: flex; flex-direction: column; background: #081522; }
@@ -1141,6 +1253,17 @@ onBeforeUnmount(() => {
 .light .quiet-button { border-color: #b8cedc; color: #3f6178; background: #f5f9fc; }
 .light .quiet-button:hover { border-color: #5790aa; color: #173b53; }
 .light .run-button { color: #052125; background: #3fcfc6; }
+.light .import-map-backdrop { background: #19334a55; }
+.light .import-map-dialog { border-color: #b8cedc; box-shadow: 0 24px 80px #35556b44; color: #34566e; background: #fff; }
+.light .import-map-heading { border-color: #d4e1e9; }
+.light .import-map-heading p { color: #168c90; }
+.light .import-map-heading h1 { color: #173b53; }
+.light .import-map-heading button { color: #648096; }
+.light .import-map-dialog > p { color: #648096; }
+.light .import-map-dialog > p code { color: #137f84; }
+.light .import-map-dialog textarea { border-color: #b8cedc; color: #25465e; background: #f8fbfd; }
+.light .import-map-dialog textarea:focus { border-color: #189e9a; }
+.light .import-map-dialog .import-map-error { color: #b4233b; }
 .light .file-panel { background: #f3f8fb; }
 .light .editor-area { background: #f8fbfd; }
 .light .preview-area { background: #fff; }

@@ -22,6 +22,10 @@ Use **Download** to generate `elfui-playground-project.zip`: it contains every
 TypeScript file, a Vite setup with the ElfUI macro plugin, the selected entry
 module, and an `elfui-playground.json` snapshot for later re-import.
 
+Use **Imports** to configure a shareable Import Map for external HTTP(S) ESM
+packages. Exact names and prefix names ending in `/` are supported. The map is
+applied in the isolated preview and included in exports and downloaded projects.
+
 By default, **Auto save** keeps the project state in the shareable URL as you
 edit. Turn it off when working with a large or temporary draft; **Copy link**
 still produces an up-to-date URL on demand. The preference is kept locally in

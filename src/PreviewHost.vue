@@ -12,6 +12,7 @@ import * as runtime from "@elfui/runtime/internal";
 import { onBeforeUnmount, onMounted, ref } from "vue";
 
 import type {
+  PlaygroundImportMap,
   PlaygroundTheme,
   PreviewConsoleMessage,
   PreviewLogLevel,
@@ -124,9 +125,19 @@ const resolveProjectImport = (from: string, specifier: string, files: PreviewRun
   return files.find((file) => candidates.includes(normalizePath(file.name)));
 };
 
+const resolveMappedImport = (specifier: string, imports: PlaygroundImportMap): string | undefined => {
+  if (imports[specifier]) return imports[specifier];
+  const prefix = Object.keys(imports)
+    .filter((key) => key.endsWith("/") && specifier.startsWith(key))
+    .sort((left, right) => right.length - left.length)[0];
+  return prefix ? `${imports[prefix]}${specifier.slice(prefix.length)}` : undefined;
+};
+
 const rewriteImports = (
   source: string,
-  resolveLocal: (specifier: string) => string
+  filename: string,
+  resolveLocal: (specifier: string) => string,
+  resolveBare: (specifier: string) => string | undefined
 ): string => source.replace(
     /import\s*\{([^}]*)\}\s*from\s*["'](elfui|@elfui\/core|@elfui\/reactivity|@elfui\/runtime\/internal)["'];?/g,
     (_, specifiers: string, moduleName: string) => {
@@ -143,9 +154,16 @@ const rewriteImports = (
   )
   .replace(/(\bimport\s*["'])(\.{1,2}\/[^"']+)(["'])/g, (_, start: string, specifier: string, end: string) =>
     `${start}${resolveLocal(specifier)}${end}`
+  )
+  .replace(/(\bfrom\s*["']|\bimport\s*["'])([^"']+)(["'])/g, (match, start: string, specifier: string, end: string) => {
+    if (/^(?:\.{1,2}\/|\/|[a-zA-Z][\w+.-]*:)/.test(specifier)) return match;
+    const resolved = resolveBare(specifier);
+    if (!resolved) throw new Error(`${filename} imports ${JSON.stringify(specifier)}. Add it to Import map or use an absolute ESM URL.`);
+    return `${start}${resolved}${end}`;
+  }
   );
 
-const run = async ({ activeFileId, components, files, id, theme: requestedTheme }: PreviewRunMessage) => {
+const run = async ({ activeFileId, components, files, id, imports, theme: requestedTheme }: PreviewRunMessage) => {
   try {
     currentRunId = id;
     theme.value = requestedTheme;
@@ -173,11 +191,16 @@ const run = async ({ activeFileId, components, files, id, theme: requestedTheme 
         throw new Error(`Circular local import: ${[...ancestry, file.id].join(" → ")}`);
       }
 
-      const code = rewriteImports(file.code, (specifier) => {
-        const dependency = resolveProjectImport(file.name, specifier, files);
-        if (!dependency) throw new Error(`${file.name} imports ${specifier}, but no matching project file exists.`);
-        return createModuleUrl(dependency, [...ancestry, file.id]);
-      });
+      const code = rewriteImports(
+        file.code,
+        file.name,
+        (specifier) => {
+          const dependency = resolveProjectImport(file.name, specifier, files);
+          if (!dependency) throw new Error(`${file.name} imports ${specifier}, but no matching project file exists.`);
+          return createModuleUrl(dependency, [...ancestry, file.id]);
+        },
+        (specifier) => resolveMappedImport(specifier, imports)
+      );
       const moduleUrl = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
       moduleUrls.set(file.id, moduleUrl);
       activeModuleUrls.push(moduleUrl);

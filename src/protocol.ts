@@ -45,6 +45,7 @@ export interface PreviewRunMessage {
   components: PlaygroundComponent[];
   files: CompiledPlaygroundFile[];
   id: number;
+  imports: PlaygroundImportMap;
   theme: PlaygroundTheme;
   type: "elfui-playground:run";
 }
@@ -55,6 +56,8 @@ export interface PreviewThemeMessage {
 }
 
 export type PlaygroundTheme = "dark" | "light";
+
+export type PlaygroundImportMap = Record<string, string>;
 
 export type PreviewLogLevel = "debug" | "error" | "info" | "log" | "warn";
 
