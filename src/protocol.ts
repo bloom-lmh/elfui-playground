@@ -56,6 +56,15 @@ export interface PreviewThemeMessage {
 
 export type PlaygroundTheme = "dark" | "light";
 
+export type PreviewLogLevel = "debug" | "error" | "info" | "log" | "warn";
+
+export interface PreviewConsoleMessage {
+  id: number;
+  level: PreviewLogLevel;
+  message: string;
+  type: "elfui-playground:console";
+}
+
 export interface PreviewStatusMessage {
   id: number;
   message?: string;

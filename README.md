@@ -42,6 +42,10 @@ file. Normal edit/compile behavior resumes immediately after formatting.
 Use **Ctrl+Enter** (or **Cmd+Enter** on macOS) to run the project from the
 keyboard.
 
+The **Console** output tab captures `console.log`, `console.info`,
+`console.warn`, `console.error`, and unhandled preview rejections. Entries are
+scoped to the latest run, so stale iframe output cannot obscure current errors.
+
 The browser preview supports the stable `@elfui/core` application API and the
 standalone `@elfui/reactivity` primitives. Both are available to Monaco and to
 the isolated runtime without a bundler configuration.

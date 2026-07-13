@@ -11,12 +11,20 @@ import * as reactivity from "@elfui/reactivity";
 import * as runtime from "@elfui/runtime/internal";
 import { onBeforeUnmount, onMounted, ref } from "vue";
 
-import type { PlaygroundTheme, PreviewRunMessage, PreviewStatusMessage, PreviewThemeMessage } from "./protocol";
+import type {
+  PlaygroundTheme,
+  PreviewConsoleMessage,
+  PreviewLogLevel,
+  PreviewRunMessage,
+  PreviewStatusMessage,
+  PreviewThemeMessage
+} from "./protocol";
 
 const mount = ref<HTMLElement | null>(null);
 const message = ref("");
 const theme = ref<PlaygroundTheme>(new URLSearchParams(window.location.search).get("theme") === "light" ? "light" : "dark");
 let activeModuleUrls: string[] = [];
+let currentRunId = 0;
 
 const parentOrigin = (): string => {
   try {
@@ -29,6 +37,64 @@ const parentOrigin = (): string => {
 const postStatus = (status: PreviewStatusMessage) => {
   window.parent.postMessage(status, parentOrigin());
 };
+
+const formatConsoleValue = (value: unknown): string => {
+  if (value instanceof Error) return value.stack ? `${value.name}: ${value.message}\n${value.stack}` : `${value.name}: ${value.message}`;
+  if (typeof value === "string") return value;
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (typeof value !== "object") return String(value);
+
+  const seen = new WeakSet<object>();
+  try {
+    return JSON.stringify(value, (_key, item: unknown) => {
+      if (typeof item === "bigint") return `${item}n`;
+      if (typeof item === "function") return `[Function ${item.name || "anonymous"}]`;
+      if (typeof item === "symbol") return item.toString();
+      if (item instanceof Error) return { message: item.message, name: item.name, stack: item.stack };
+      if (item && typeof item === "object") {
+        if (seen.has(item)) return "[Circular]";
+        seen.add(item);
+      }
+      return item;
+    }, 2) ?? String(value);
+  } catch {
+    return String(value);
+  }
+};
+
+const postConsole = (level: PreviewLogLevel, values: unknown[], id = currentRunId) => {
+  const status: PreviewConsoleMessage = {
+    id,
+    level,
+    message: values.map(formatConsoleValue).join(" "),
+    type: "elfui-playground:console"
+  };
+  window.parent.postMessage(status, parentOrigin());
+};
+
+const originalConsole = {
+  debug: console.debug.bind(console),
+  error: console.error.bind(console),
+  info: console.info.bind(console),
+  log: console.log.bind(console),
+  warn: console.warn.bind(console)
+};
+
+const installConsoleForwarder = () => {
+  for (const level of Object.keys(originalConsole) as PreviewLogLevel[]) {
+    console[level] = (...values: unknown[]) => {
+      originalConsole[level](...values);
+      postConsole(level, values);
+    };
+  }
+};
+
+const restoreConsole = () => {
+  for (const level of Object.keys(originalConsole) as PreviewLogLevel[]) console[level] = originalConsole[level];
+};
+
+const handleUnhandledRejection = (event: PromiseRejectionEvent) => postConsole("error", [event.reason]);
 
 const bindingsFor = (specifiers: string, namespace: string): string => {
   const bindings = specifiers
@@ -81,6 +147,7 @@ const rewriteImports = (
 
 const run = async ({ activeFileId, components, files, id, theme: requestedTheme }: PreviewRunMessage) => {
   try {
+    currentRunId = id;
     theme.value = requestedTheme;
     message.value = "";
     mount.value?.replaceChildren();
@@ -130,6 +197,7 @@ const run = async ({ activeFileId, components, files, id, theme: requestedTheme 
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     message.value = detail;
+    postConsole("error", [error], id);
     postStatus({ id, message: detail, type: "elfui-playground:error" });
   }
 };
@@ -145,13 +213,19 @@ const receive = (event: MessageEvent<PreviewRunMessage | PreviewThemeMessage>) =
   }
 };
 
-onMounted(() => window.addEventListener("message", receive));
+onMounted(() => {
+  installConsoleForwarder();
+  window.addEventListener("message", receive);
+  window.addEventListener("unhandledrejection", handleUnhandledRejection);
+});
 onMounted(() => {
   const id = Number(new URLSearchParams(window.location.search).get("run"));
   postStatus({ id: Number.isFinite(id) ? id : 0, type: "elfui-playground:host-ready" });
 });
 onBeforeUnmount(() => {
   window.removeEventListener("message", receive);
+  window.removeEventListener("unhandledrejection", handleUnhandledRejection);
+  restoreConsole();
   activeModuleUrls.forEach((url) => URL.revokeObjectURL(url));
 });
 </script>

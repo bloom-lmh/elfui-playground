@@ -102,11 +102,14 @@
               <span class="live-dot"></span> Preview
             </button>
             <button :class="{ active: outputMode === 'compiled' }" type="button" role="tab" @click="outputMode = 'compiled'">Compiled JS</button>
+            <button :class="{ active: outputMode === 'console' }" type="button" role="tab" @click="outputMode = 'console'">Console{{ previewLogs.length ? ` (${previewLogs.length})` : "" }}</button>
           </div>
-          <span>{{ previewOrigin ? previewOrigin.replace(/^https?:\/\//, "") : "not configured" }}</span>
+          <button v-if="outputMode === 'console' && previewLogs.length" type="button" class="console-clear" @click="previewLogs = []">Clear</button>
+          <span v-else>{{ previewOrigin ? previewOrigin.replace(/^https?:\/\//, "") : "not configured" }}</span>
         </div>
         <iframe
-          v-if="outputMode === 'preview' && previewOrigin"
+          v-if="previewOrigin"
+          v-show="outputMode === 'preview'"
           :key="previewKey"
           ref="previewFrame"
           class="preview-frame"
@@ -114,8 +117,14 @@
           sandbox="allow-scripts allow-same-origin"
           title="ElfUI component preview"
         ></iframe>
-        <pre v-else-if="outputMode === 'compiled'" class="compiled-output"><code>{{ compiledSource || "Compile the project to inspect the generated JavaScript." }}</code></pre>
-        <div v-else class="preview-unavailable">Configure an isolated preview origin to run code.</div>
+        <pre v-if="outputMode === 'compiled'" class="compiled-output"><code>{{ compiledSource || "Compile the project to inspect the generated JavaScript." }}</code></pre>
+        <ol v-else-if="outputMode === 'console'" class="console-output" aria-label="Preview console">
+          <li v-for="(entry, index) in previewLogs" :key="`${entry.id}-${index}`" :class="entry.level">
+            <b>{{ entry.level }}</b><code>{{ entry.message }}</code>
+          </li>
+          <li v-if="!previewLogs.length" class="empty"><code>Console output from the preview will appear here.</code></li>
+        </ol>
+        <div v-else-if="!previewOrigin" class="preview-unavailable">Configure an isolated preview origin to run code.</div>
       </section>
     </section>
 
@@ -148,6 +157,8 @@ import type {
   PlaygroundDiagnostic,
   PlaygroundFile,
   PlaygroundTheme,
+  PreviewConsoleMessage,
+  PreviewLogLevel,
   PreviewThemeMessage,
   PreviewStatusMessage
 } from "./protocol";
@@ -166,6 +177,8 @@ type EncodedState = {
 type ProjectTreeItem =
   | { collapsed: boolean; depth: number; id: string; kind: "folder"; name: string }
   | { depth: number; file: PlaygroundFile; id: string; kind: "file" };
+
+type PreviewLogEntry = { id: number; level: PreviewLogLevel; message: string };
 
 type ProjectTreeFolder = {
   files: PlaygroundFile[];
@@ -269,7 +282,8 @@ const theme = ref<PlaygroundTheme>(initialTheme());
 const previewTheme = ref<PlaygroundTheme>(theme.value);
 const exportLabel = ref("Export");
 const importLabel = ref("Import");
-const outputMode = ref<"preview" | "compiled">("preview");
+const outputMode = ref<"preview" | "compiled" | "console">("preview");
+const previewLogs = ref<PreviewLogEntry[]>([]);
 const compiledFiles = ref<CompiledPlaygroundFile[]>([]);
 const startingProject = initialProject();
 const files = ref<PlaygroundFile[]>(startingProject.files);
@@ -570,6 +584,7 @@ const compileNow = () => {
   statusKind.value = "compiling";
   diagnostics.value = [];
   compiledFiles.value = [];
+  previewLogs.value = [];
   updateEditorMarkers();
   syncHash();
   compiler.postMessage({
@@ -755,8 +770,12 @@ const handleRunShortcut = (event: KeyboardEvent) => {
   compileNow();
 };
 
-const receivePreview = ({ data, origin, source: messageSource }: MessageEvent<PreviewStatusMessage>) => {
+const receivePreview = ({ data, origin, source: messageSource }: MessageEvent<PreviewStatusMessage | PreviewConsoleMessage>) => {
   if (origin !== previewOrigin.value || messageSource !== previewFrame.value?.contentWindow || data.id !== requestId) return;
+  if (data.type === "elfui-playground:console") {
+    previewLogs.value = [...previewLogs.value.slice(-199), { id: data.id, level: data.level, message: data.message }];
+    return;
+  }
   if (data.type === "elfui-playground:host-ready") {
     sendPreview();
     return;
@@ -998,9 +1017,18 @@ onBeforeUnmount(() => {
 .output-tabs button.active { color: #e8f8ff; background: #0d2031; box-shadow: inset 0 -2px #45d8cf; }
 .output-tabs .live-dot { margin-right: 6px; }
 .preview-toolbar > span { color: #648299; font: 600 10px/1 "JetBrains Mono", ui-monospace, monospace; }
+.console-clear { margin-left: auto; border: 0; color: #77acc5; background: transparent; font: 700 11px/1 Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
+.console-clear:hover { color: #e0f5ff; }
 .live-dot { display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 999px; background: #49d9ca; box-shadow: 0 0 12px #49d9ca; }
 .preview-frame { width: 100%; height: 100%; border: 0; background: #08111f; }
 .compiled-output { min-width: 0; margin: 0; padding: 18px 20px; overflow: auto; color: #c6d9e5; background: #07111f; font: 13px/1.65 "JetBrains Mono", ui-monospace, monospace; tab-size: 2; white-space: pre; }
+.console-output { display: grid; align-content: start; gap: 0; min-width: 0; margin: 0; padding: 10px 0; overflow: auto; color: #c6d9e5; background: #07111f; list-style: none; font: 12px/1.55 "JetBrains Mono", ui-monospace, monospace; }
+.console-output li { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 12px; padding: 7px 18px; border-bottom: 1px solid #19304488; }
+.console-output li b { color: #7ea4bd; font-size: 10px; text-transform: uppercase; }
+.console-output li code { overflow-wrap: anywhere; white-space: pre-wrap; }
+.console-output li.warn b { color: #f2c86b; }
+.console-output li.error b { color: #ff94a4; }
+.console-output li.empty { display: block; color: #7896aa; }
 .preview-unavailable { display: grid; place-items: center; padding: 30px; color: #ffafba; text-align: center; font-size: 13px; line-height: 1.6; }
 .diagnostics { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 28px; min-height: 132px; padding: 23px 26px; border-top: 1px solid #193044; background: #081522; }
 .diagnostics-heading p { margin: 0 0 9px; color: #49d9ca; font: 800 10px/1 Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .13em; }
@@ -1035,10 +1063,18 @@ onBeforeUnmount(() => {
 .light .entry-select select { border-color: #b8cedc; color: #34566e; background: #fff; }
 .light .tab { color: #34566e; }
 .light .preview-toolbar > span { color: #648096; }
+.light .console-clear { color: #547084; }
+.light .console-clear:hover { color: #173b53; }
 .light .output-tabs button { border-color: #cbdbe5; color: #547084; }
 .light .output-tabs button.active { color: #173b53; background: #e5f0f5; }
 .light .preview-frame { background: #f8fbfd; }
 .light .compiled-output { color: #25465e; background: #f8fbfd; }
+.light .console-output { color: #25465e; background: #f8fbfd; }
+.light .console-output li { border-color: #d9e7ee; }
+.light .console-output li b { color: #628096; }
+.light .console-output li.warn b { color: #a76d00; }
+.light .console-output li.error b { color: #b4233b; }
+.light .console-output li.empty { color: #718da0; }
 .light .diagnostics { border-color: #cbdbe5; background: #f3f8fb; }
 .light .diagnostics-heading h1 { color: #173b53; }
 .light .diagnostics li { border-color: #ebacb7; color: #9d1830; background: #fff1f3; }
