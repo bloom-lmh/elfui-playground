@@ -45,8 +45,16 @@ export interface PreviewRunMessage {
   components: PlaygroundComponent[];
   files: CompiledPlaygroundFile[];
   id: number;
+  theme: PlaygroundTheme;
   type: "elfui-playground:run";
 }
+
+export interface PreviewThemeMessage {
+  theme: PlaygroundTheme;
+  type: "elfui-playground:theme";
+}
+
+export type PlaygroundTheme = "dark" | "light";
 
 export interface PreviewStatusMessage {
   id: number;

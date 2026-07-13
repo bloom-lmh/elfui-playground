@@ -1,10 +1,11 @@
 <template>
-  <main class="playground-shell">
+  <main :class="['playground-shell', theme]">
     <header class="topbar">
       <a class="brand" href="/" aria-label="ElfUI Playground home">ElfUI<span>Playground</span></a>
       <div class="topbar-actions">
         <button type="button" class="quiet-button" @click="formatActiveFile">{{ formatLabel }}</button>
         <button type="button" class="quiet-button" :aria-pressed="autoSave" title="Keep the workspace state in the shareable URL" @click="toggleAutoSave">Auto save {{ autoSave ? "on" : "off" }}</button>
+        <button type="button" class="quiet-button" :aria-label="theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'" @click="toggleTheme">{{ theme === "dark" ? "Light theme" : "Dark theme" }}</button>
         <button type="button" class="quiet-button" @click="copyShareLink">{{ shareLabel }}</button>
         <button type="button" class="quiet-button" @click="exportProject">{{ exportLabel }}</button>
         <button type="button" class="quiet-button" @click="importInput?.click()">{{ importLabel }}</button>
@@ -146,6 +147,8 @@ import type {
   CompileResponse,
   PlaygroundDiagnostic,
   PlaygroundFile,
+  PlaygroundTheme,
+  PreviewThemeMessage,
   PreviewStatusMessage
 } from "./protocol";
 import { elfuiTypeDefinitions } from "./elfui-types";
@@ -191,6 +194,14 @@ const initialAutoSave = (): boolean => {
     return window.localStorage.getItem("elfui-playground:auto-save") !== "false";
   } catch {
     return true;
+  }
+};
+
+const initialTheme = (): PlaygroundTheme => {
+  try {
+    return window.localStorage.getItem("elfui-playground:theme") === "light" ? "light" : "dark";
+  } catch {
+    return "dark";
   }
 };
 
@@ -254,6 +265,8 @@ const statusKind = ref<"compiling" | "error" | "ready">("compiling");
 const shareLabel = ref("Copy link");
 const formatLabel = ref("Format");
 const autoSave = ref(initialAutoSave());
+const theme = ref<PlaygroundTheme>(initialTheme());
+const previewTheme = ref<PlaygroundTheme>(theme.value);
 const exportLabel = ref("Export");
 const importLabel = ref("Import");
 const outputMode = ref<"preview" | "compiled">("preview");
@@ -277,7 +290,7 @@ let requestId = 0;
 let pendingPreview: Extract<CompileResponse, { files?: unknown }> | undefined;
 const editorModels = new Map<string, monaco.editor.ITextModel>();
 
-const previewUrl = computed(() => `${previewOrigin.value}/preview?run=${previewKey.value}`);
+const previewUrl = computed(() => `${previewOrigin.value}/preview?run=${previewKey.value}&theme=${previewTheme.value}`);
 const compiledSource = computed(() => compiledFiles.value.find((file) => file.id === activeFileId.value)?.code ?? "");
 const projectTreeItems = computed<ProjectTreeItem[]>(() => {
   const root: ProjectTreeFolder = { files: [], folders: new Map() };
@@ -484,6 +497,24 @@ const toggleAutoSave = () => {
     // The Playground still works if storage is unavailable in a privacy-restricted browser.
   }
   if (autoSave.value) syncHash();
+};
+
+const editorTheme = () => theme.value === "light" ? "elfui-day" : "elfui-night";
+
+const sendPreviewTheme = () => {
+  const message: PreviewThemeMessage = { theme: theme.value, type: "elfui-playground:theme" };
+  previewFrame.value?.contentWindow?.postMessage(message, previewOrigin.value);
+};
+
+const toggleTheme = () => {
+  theme.value = theme.value === "dark" ? "light" : "dark";
+  try {
+    window.localStorage.setItem("elfui-playground:theme", theme.value);
+  } catch {
+    // Theme switching remains available in privacy-restricted browsers.
+  }
+  monaco.editor.setTheme(editorTheme());
+  sendPreviewTheme();
 };
 
 const replaceProject = (project: ProjectState) => {
@@ -697,6 +728,7 @@ const receiveCompile = async ({ data }: MessageEvent<CompileResponse>) => {
   }
   compiledFiles.value = data.files;
   pendingPreview = data;
+  previewTheme.value = theme.value;
   previewKey.value += 1;
   await nextTick();
 };
@@ -709,6 +741,7 @@ const sendPreview = () => {
       components: pendingPreview.components,
       files: pendingPreview.files,
       id: pendingPreview.id,
+      theme: theme.value,
       type: "elfui-playground:run"
     },
     previewOrigin.value
@@ -821,6 +854,19 @@ onMounted(() => {
     },
     rules: []
   });
+  monaco.editor.defineTheme("elfui-day", {
+    base: "vs",
+    inherit: true,
+    colors: {
+      "editor.background": "#f8fbfd",
+      "editor.lineHighlightBackground": "#e9f3f8",
+      "editorCursor.foreground": "#137f84",
+      "editor.selectionBackground": "#b9e5e480",
+      "editorLineNumber.foreground": "#8aa1af",
+      "editorLineNumber.activeForeground": "#386078"
+    },
+    rules: []
+  });
   monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
     allowNonTsExtensions: true,
     module: monaco.languages.typescript.ModuleKind.ESNext,
@@ -866,7 +912,7 @@ onMounted(() => {
     minimap: { enabled: false },
     padding: { top: 18, bottom: 18 },
     scrollBeyondLastLine: false,
-    theme: "elfui-night",
+    theme: editorTheme(),
     model: restoredModel
   });
   editor.onDidChangeModelContent(() => {
@@ -955,6 +1001,40 @@ onBeforeUnmount(() => {
 .diagnostics li:hover { border-color: #a95064; background: #51203144; }
 .diagnostics li b, .diagnostics li span { font: 700 11px/1.5 "JetBrains Mono", ui-monospace, monospace; }
 .diagnostics li p, .diagnostics-empty { margin: 0; color: #91aabd; line-height: 1.55; }
+.playground-shell.light { color: #18334a; background: #f5f9fc; }
+.light .topbar { border-color: #cbdbe5; background: rgba(255, 255, 255, .94); }
+.light .brand { color: #19334b; }
+.light .quiet-button { border-color: #b8cedc; color: #3f6178; background: #f5f9fc; }
+.light .quiet-button:hover { border-color: #5790aa; color: #173b53; }
+.light .run-button { color: #052125; background: #3fcfc6; }
+.light .file-panel { background: #f3f8fb; }
+.light .editor-area { background: #f8fbfd; }
+.light .preview-area { background: #fff; }
+.light .file-panel, .light .editor-area, .light .preview-area { border-color: #cbdbe5; }
+.light .panel-heading, .light .tabbar, .light .preview-toolbar { border-color: #cbdbe5; color: #577487; }
+.light .folder-row { color: #587286; }
+.light .folder-row:hover { color: #254d66; background: #e5f0f5; }
+.light .file-row { color: #456177; }
+.light .file-row.active { border-left-color: #189e9a; color: #173b53; background: #dff0f5; }
+.light .rename-file { color: #173b53; background: #fff; }
+.light .rename-file-button, .light .delete-file { color: #688398; }
+.light .file-action-error { color: #b4233b; }
+.light .preset-section p, .light .file-panel-note { color: #658096; }
+.light .preset-button { color: #456177; }
+.light .preset-button:hover, .light .preset-button.active { border-color: #b8d1df; color: #183b53; background: #e5f0f5; }
+.light .entry-select { color: #547084; }
+.light .entry-select select { border-color: #b8cedc; color: #34566e; background: #fff; }
+.light .tab { color: #34566e; }
+.light .preview-toolbar > span { color: #648096; }
+.light .output-tabs button { border-color: #cbdbe5; color: #547084; }
+.light .output-tabs button.active { color: #173b53; background: #e5f0f5; }
+.light .preview-frame { background: #f8fbfd; }
+.light .compiled-output { color: #25465e; background: #f8fbfd; }
+.light .diagnostics { border-color: #cbdbe5; background: #f3f8fb; }
+.light .diagnostics-heading h1 { color: #173b53; }
+.light .diagnostics li { border-color: #ebacb7; color: #9d1830; background: #fff1f3; }
+.light .diagnostics li:hover { border-color: #d46c7e; background: #ffe7eb; }
+.light .diagnostics li p, .light .diagnostics-empty { color: #526f83; }
 @media (max-width: 980px) { .workspace { grid-template-columns: 190px minmax(0, 1fr); } .preview-area { grid-column: 2; min-height: 420px; border-top: 1px solid #193044; } .diagnostics { grid-template-columns: 1fr; gap: 16px; } }
 @media (max-width: 680px) { .topbar { padding: 0 14px; } .brand span, .docs-link { display: none; } .workspace { display: block; } .file-panel { min-height: 150px; border-bottom: 1px solid #193044; } .file-panel-note { display: none; } .editor-area, .preview-area { min-height: 430px; border-bottom: 1px solid #193044; } .diagnostics { padding: 20px 16px; } .diagnostics li { grid-template-columns: 1fr; gap: 4px; } }
 </style>

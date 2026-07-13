@@ -23,6 +23,10 @@ edit. Turn it off when working with a large or temporary draft; **Copy link**
 still produces an up-to-date URL on demand. The preference is kept locally in
 the browser.
 
+Use **Light theme** or **Dark theme** to switch the editor chrome and preview
+canvas without restarting the running preview. The choice is kept locally; a
+component's own styles remain under the component author's control.
+
 The default **Application** starter mirrors a real ElfUI project: `App.ts`
 exports a macro component and `main.ts` imports it and calls
 `createApp(App).mount("#app")`. Ordinary TypeScript entry modules are executed

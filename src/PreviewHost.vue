@@ -1,5 +1,5 @@
 <template>
-  <main class="preview-host">
+  <main :class="['preview-host', theme]">
     <div id="app" ref="mount" class="preview-mount"></div>
     <p v-if="message" class="preview-message">{{ message }}</p>
   </main>
@@ -11,10 +11,11 @@ import * as reactivity from "@elfui/reactivity";
 import * as runtime from "@elfui/runtime/internal";
 import { onBeforeUnmount, onMounted, ref } from "vue";
 
-import type { PreviewRunMessage, PreviewStatusMessage } from "./protocol";
+import type { PlaygroundTheme, PreviewRunMessage, PreviewStatusMessage, PreviewThemeMessage } from "./protocol";
 
 const mount = ref<HTMLElement | null>(null);
 const message = ref("");
+const theme = ref<PlaygroundTheme>(new URLSearchParams(window.location.search).get("theme") === "light" ? "light" : "dark");
 let activeModuleUrls: string[] = [];
 
 const parentOrigin = (): string => {
@@ -78,8 +79,9 @@ const rewriteImports = (
     `${start}${resolveLocal(specifier)}${end}`
   );
 
-const run = async ({ activeFileId, components, files, id }: PreviewRunMessage) => {
+const run = async ({ activeFileId, components, files, id, theme: requestedTheme }: PreviewRunMessage) => {
   try {
+    theme.value = requestedTheme;
     message.value = "";
     mount.value?.replaceChildren();
     activeModuleUrls.forEach((url) => URL.revokeObjectURL(url));
@@ -132,9 +134,15 @@ const run = async ({ activeFileId, components, files, id }: PreviewRunMessage) =
   }
 };
 
-const receive = (event: MessageEvent<PreviewRunMessage>) => {
-  if (event.source !== window.parent || event.origin !== parentOrigin() || event.data?.type !== "elfui-playground:run") return;
-  void run(event.data);
+const receive = (event: MessageEvent<PreviewRunMessage | PreviewThemeMessage>) => {
+  if (event.source !== window.parent || event.origin !== parentOrigin()) return;
+  if (event.data?.type === "elfui-playground:theme") {
+    theme.value = event.data.theme;
+    return;
+  }
+  if (event.data?.type === "elfui-playground:run") {
+    void run(event.data);
+  }
 };
 
 onMounted(() => window.addEventListener("message", receive));
@@ -161,4 +169,6 @@ onBeforeUnmount(() => {
 
 .preview-mount { width: min(100%, 720px); }
 .preview-message { margin: 0; color: #ff9cab; }
+.preview-host.light { color: #18334a; background: #f8fbfd; }
+.preview-host.light .preview-message { color: #b4233b; }
 </style>
