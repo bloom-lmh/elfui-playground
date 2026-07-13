@@ -1,8 +1,12 @@
-:root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #07111f; }
+:root { color: #dceffc; background: #07111f; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
 * { box-sizing: border-box; }
 html, body, #app { min-width: 320px; min-height: 100%; margin: 0; }
-button, input, textarea { font: inherit; }
-::selection { background: #2c899080; }
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: #07111f; }
-::-webkit-scrollbar-thumb { border: 3px solid #07111f; border-radius: 999px; background: #2b5067; }
+body { display: grid; min-height: 100vh; place-items: center; background: radial-gradient(circle at top, #123852, #07111f 56%); }
+button { font: inherit; }
+.app-shell { width: min(100% - 40px, 640px); padding: 54px; border: 1px solid #28516d; border-radius: 20px; background: #0b1d2de6; box-shadow: 0 28px 80px #0008; }
+.eyebrow { margin: 0 0 14px; color: #51ded2; font-size: 12px; font-weight: 800; letter-spacing: .12em; }
+h1 { margin: 0; color: #f3fbff; font-size: clamp(34px, 6vw, 56px); line-height: 1; }
+.intro { margin: 22px 0 32px; color: #a9c7d9; font-size: 16px; line-height: 1.65; }
+code { color: #8be9e1; }
+button { min-width: 148px; padding: 13px 18px; border: 0; border-radius: 9px; color: #062126; background: #50dcd2; font-weight: 800; cursor: pointer; }
+button:hover { background: #83f0e8; }

@@ -1,7 +1,5 @@
-import { createApp } from "vue";
-
-import App from "./App.vue";
-import PreviewHost from "./PreviewHost.vue";
+import { createApp } from "@elfui/core";
+import { App } from "./App";
 import "./style.css";
 
-createApp(window.location.pathname === "/preview" ? PreviewHost : App).mount("#app");
+createApp(App).mount("#app");
