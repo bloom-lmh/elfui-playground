@@ -12,7 +12,7 @@
         <button type="button" class="quiet-button" @click="openImportMap">Imports{{ Object.keys(imports).length ? ` (${Object.keys(imports).length})` : "" }}</button>
         <button type="button" class="quiet-button" @click="importInput?.click()">{{ importLabel }}</button>
         <input ref="importInput" hidden type="file" accept="application/json,.json" @change="importProject" />
-        <a class="quiet-button docs-link" href="https://github.com/bloom-lmh/elfui-docs">Documentation</a>
+        <a class="quiet-button docs-link" href="https://elfui-docs.vercel.app/">Documentation</a>
         <button type="button" class="run-button" title="Run project (Ctrl+Enter)" @click="compileNow">
           <span aria-hidden="true">&#9654;</span> Run
         </button>
