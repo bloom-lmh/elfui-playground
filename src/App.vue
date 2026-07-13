@@ -4,6 +4,7 @@
       <a class="brand" href="/" aria-label="ElfUI Playground home">ElfUI<span>Playground</span></a>
       <div class="topbar-actions">
         <button type="button" class="quiet-button" @click="formatActiveFile">{{ formatLabel }}</button>
+        <button type="button" class="quiet-button" :aria-pressed="autoSave" title="Keep the workspace state in the shareable URL" @click="toggleAutoSave">Auto save {{ autoSave ? "on" : "off" }}</button>
         <button type="button" class="quiet-button" @click="copyShareLink">{{ shareLabel }}</button>
         <button type="button" class="quiet-button" @click="exportProject">{{ exportLabel }}</button>
         <button type="button" class="quiet-button" @click="importInput?.click()">{{ importLabel }}</button>
@@ -185,6 +186,14 @@ const initialProject = (): { activeFileId: string; entryFileId: string; files: P
     : { activeFileId: "app", entryFileId: "app", files: [initialFile()] };
 };
 
+const initialAutoSave = (): boolean => {
+  try {
+    return window.localStorage.getItem("elfui-playground:auto-save") !== "false";
+  } catch {
+    return true;
+  }
+};
+
 const normalizeProjectPath = (value: string) => value.replace(/\\/g, "/").replace(/^\.\//, "");
 
 const isValidProjectPath = (value: string): boolean =>
@@ -244,6 +253,7 @@ const previewKey = ref(0);
 const statusKind = ref<"compiling" | "error" | "ready">("compiling");
 const shareLabel = ref("Copy link");
 const formatLabel = ref("Format");
+const autoSave = ref(initialAutoSave());
 const exportLabel = ref("Export");
 const importLabel = ref("Import");
 const outputMode = ref<"preview" | "compiled">("preview");
@@ -454,7 +464,8 @@ const collectTypeScriptDiagnostics = async (compileId: number): Promise<Playgrou
   }
 };
 
-const syncHash = () => {
+const syncHash = (force = false) => {
+  if (!autoSave.value && !force) return;
   const url = new URL(window.location.href);
   url.hash = new URLSearchParams({ code: encodeState({
     activeFileId: activeFileId.value,
@@ -463,6 +474,16 @@ const syncHash = () => {
     version: 1
   }) }).toString();
   window.history.replaceState({}, "", url);
+};
+
+const toggleAutoSave = () => {
+  autoSave.value = !autoSave.value;
+  try {
+    window.localStorage.setItem("elfui-playground:auto-save", String(autoSave.value));
+  } catch {
+    // The Playground still works if storage is unavailable in a privacy-restricted browser.
+  }
+  if (autoSave.value) syncHash();
 };
 
 const replaceProject = (project: ProjectState) => {
@@ -707,7 +728,7 @@ const receivePreview = ({ data, origin, source: messageSource }: MessageEvent<Pr
 };
 
 const copyShareLink = async () => {
-  syncHash();
+  syncHash(true);
   try {
     await navigator.clipboard.writeText(window.location.href);
     shareLabel.value = "Copied";

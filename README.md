@@ -18,6 +18,11 @@ Use **Export** to save the entire workspace as `elfui-playground.json`, and
 **Import** to restore it later. Imported projects are validated before their
 Monaco models and preview are replaced.
 
+By default, **Auto save** keeps the project state in the shareable URL as you
+edit. Turn it off when working with a large or temporary draft; **Copy link**
+still produces an up-to-date URL on demand. The preference is kept locally in
+the browser.
+
 The default **Application** starter mirrors a real ElfUI project: `App.ts`
 exports a macro component and `main.ts` imports it and calls
 `createApp(App).mount("#app")`. Ordinary TypeScript entry modules are executed
