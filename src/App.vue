@@ -456,6 +456,7 @@ const syncHash = () => {
 const replaceProject = (project: ProjectState) => {
   editorModels.forEach((model) => model.dispose());
   editorModels.clear();
+  collapsedFolders.value = new Set();
   files.value = project.files;
   activeFileId.value = project.activeFileId;
   entryFileId.value = project.entryFileId;
@@ -635,6 +636,7 @@ const loadPreset = (id: (typeof playgroundPresets)[number]["id"]) => {
   activePreset.value = id;
   editorModels.forEach((model) => model.dispose());
   editorModels.clear();
+  collapsedFolders.value = new Set();
   files.value = preset.project
     ? preset.project.files.map((file) => ({ ...file }))
     : [initialFile(preset.source)];
