@@ -39,6 +39,9 @@ links and exported workspace files.
 Use **Format** to run Monaco's TypeScript document formatter on the active
 file. Normal edit/compile behavior resumes immediately after formatting.
 
+Use **Ctrl+Enter** (or **Cmd+Enter** on macOS) to run the project from the
+keyboard.
+
 The browser preview supports the stable `@elfui/core` application API and the
 standalone `@elfui/reactivity` primitives. Both are available to Monaco and to
 the isolated runtime without a bundler configuration.

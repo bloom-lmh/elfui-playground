@@ -11,7 +11,7 @@
         <button type="button" class="quiet-button" @click="importInput?.click()">{{ importLabel }}</button>
         <input ref="importInput" hidden type="file" accept="application/json,.json" @change="importProject" />
         <a class="quiet-button docs-link" href="https://github.com/bloom-lmh/elfui-docs">Documentation</a>
-        <button type="button" class="run-button" @click="compileNow">
+        <button type="button" class="run-button" title="Run project (Ctrl+Enter)" @click="compileNow">
           <span aria-hidden="true">&#9654;</span> Run
         </button>
       </div>
@@ -748,6 +748,13 @@ const sendPreview = () => {
   );
 };
 
+const handleRunShortcut = (event: KeyboardEvent) => {
+  if (event.repeat || !(event.ctrlKey || event.metaKey) || event.key !== "Enter") return;
+  event.preventDefault();
+  event.stopPropagation();
+  compileNow();
+};
+
 const receivePreview = ({ data, origin, source: messageSource }: MessageEvent<PreviewStatusMessage>) => {
   if (origin !== previewOrigin.value || messageSource !== previewFrame.value?.contentWindow || data.id !== requestId) return;
   if (data.type === "elfui-playground:host-ready") {
@@ -826,6 +833,7 @@ const importProject = async (event: Event) => {
 };
 
 onMounted(() => {
+  window.addEventListener("keydown", handleRunShortcut, true);
   const configuredOrigin = import.meta.env.VITE_PLAYGROUND_PREVIEW_ORIGIN?.replace(/\/$/, "");
   const localPreviewOrigin = `${window.location.protocol}//127.0.0.1:${window.location.port}`;
   previewOrigin.value = configuredOrigin || (import.meta.env.DEV ? localPreviewOrigin : "");
@@ -926,6 +934,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener("keydown", handleRunShortcut, true);
   if (debounce) window.clearTimeout(debounce);
   compiler?.terminate();
   editor?.dispose();
