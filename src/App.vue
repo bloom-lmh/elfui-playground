@@ -40,7 +40,7 @@
             {{ preset.title }}
           </button>
         </div>
-        <div class="file-panel-note">Files compile independently. Select a file to preview it. Relative imports and language intelligence are next.</div>
+        <div class="file-panel-note">Files compile as project modules. Use relative imports such as <code>./Component2.elf</code>; select a file to preview it.</div>
       </aside>
 
       <section class="editor-area">

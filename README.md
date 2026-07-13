@@ -9,8 +9,10 @@ project panel, switch between them, and copy the resulting URL to share the
 entire workspace. Every file is compiled in a Worker; the selected file is run
 inside the isolated preview.
 
-Files currently compile as independent macro modules. Relative imports and
-cross-file language intelligence are planned for the next workspace iteration.
+Files run as separate browser ESM modules. Relative imports between project
+files resolve automatically, for example `import { Badge } from "./Badge.elf"`
+will resolve `Badge.elf.ts`. Cross-file language intelligence is planned for a
+later workspace iteration.
 
 ## Development
 

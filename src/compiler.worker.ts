@@ -62,7 +62,7 @@ scope.onmessage = ({ data }: MessageEvent<CompileRequest>) => {
       diagnostics.push(...transpileDiagnostics);
       if (transpileDiagnostics.length) continue;
 
-      files.push({ code: transpiled.outputText, id: file.id });
+      files.push({ code: transpiled.outputText, id: file.id, name: file.name });
       components.push(...compiled.components.map(({ exportName, name }) => ({ exportName, fileId: file.id, name })));
     } catch (error) {
       diagnostics.push({

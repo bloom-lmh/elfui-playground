@@ -35,13 +35,31 @@ const bindingsFor = (specifiers: string, namespace: string): string => {
     .filter(Boolean)
     .map((item) => item.replace(/\s+as\s+/, ": "));
 
-  // Files are concatenated before previewing, so `var` intentionally permits
-  // repeated imports of the same helper from separate project files.
+  // The preview injects framework bindings because user modules run from Blob URLs.
   return `var { ${bindings.join(", ")} } = ${namespace};`;
 };
 
-const rewriteImports = (source: string): string =>
-  source.replace(
+const normalizePath = (value: string): string => value.replace(/\\/g, "/").replace(/^\.\//, "");
+
+const resolveProjectImport = (from: string, specifier: string, files: PreviewRunMessage["files"]) => {
+  const fromParts = normalizePath(from).split("/");
+  fromParts.pop();
+  const parts = [...fromParts, ...specifier.split("/")];
+  const normalized: string[] = [];
+  for (const part of parts) {
+    if (!part || part === ".") continue;
+    if (part === "..") normalized.pop();
+    else normalized.push(part);
+  }
+  const path = normalized.join("/");
+  const candidates = [path, `${path}.ts`, `${path}.elf.ts`, `${path}/index.ts`, `${path}/index.elf.ts`];
+  return files.find((file) => candidates.includes(normalizePath(file.name)));
+};
+
+const rewriteImports = (
+  source: string,
+  resolveLocal: (specifier: string) => string
+): string => source.replace(
     /import\s*\{([^}]*)\}\s*from\s*["'](elfui|@elfui\/core|@elfui\/runtime\/internal)["'];?/g,
     (_, specifiers: string, moduleName: string) => {
       const namespace = moduleName === "@elfui/runtime/internal"
@@ -49,6 +67,12 @@ const rewriteImports = (source: string): string =>
         : "globalThis.__elfuiPlayground.core";
       return bindingsFor(specifiers, namespace);
     }
+  )
+  .replace(/(\bfrom\s*["'])(\.{1,2}\/[^"']+)(["'])/g, (_, start: string, specifier: string, end: string) =>
+    `${start}${resolveLocal(specifier)}${end}`
+  )
+  .replace(/(\bimport\s*["'])(\.{1,2}\/[^"']+)(["'])/g, (_, start: string, specifier: string, end: string) =>
+    `${start}${resolveLocal(specifier)}${end}`
   );
 
 const run = async ({ activeFileId, components, files, id }: PreviewRunMessage) => {
@@ -63,15 +87,32 @@ const run = async ({ activeFileId, components, files, id }: PreviewRunMessage) =
       runtime
     };
 
-    const modules = new Map<string, Record<string, unknown>>();
-    for (const file of files) {
-      const moduleUrl = URL.createObjectURL(new Blob([rewriteImports(file.code)], { type: "text/javascript" }));
+    const activeFile = files.find((file) => file.id === activeFileId);
+    if (!activeFile) throw new Error("The selected file no longer exists in this project.");
+
+    const moduleUrls = new Map<string, string>();
+    const createModuleUrl = (file: PreviewRunMessage["files"][number], ancestry: string[] = []): string => {
+      const existing = moduleUrls.get(file.id);
+      if (existing) return existing;
+      if (ancestry.includes(file.id)) {
+        throw new Error(`Circular local import: ${[...ancestry, file.id].join(" → ")}`);
+      }
+
+      const code = rewriteImports(file.code, (specifier) => {
+        const dependency = resolveProjectImport(file.name, specifier, files);
+        if (!dependency) throw new Error(`${file.name} imports ${specifier}, but no matching project file exists.`);
+        return createModuleUrl(dependency, [...ancestry, file.id]);
+      });
+      const moduleUrl = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
+      moduleUrls.set(file.id, moduleUrl);
       activeModuleUrls.push(moduleUrl);
-      modules.set(file.id, await import(/* @vite-ignore */ moduleUrl));
-    }
+      return moduleUrl;
+    };
+
+    const activeModule = await import(/* @vite-ignore */ createModuleUrl(activeFile));
 
     for (const component of components.filter((candidate) => candidate.fileId === activeFileId)) {
-      const exported = modules.get(component.fileId)?.[component.exportName];
+      const exported = activeModule[component.exportName];
       if (!exported) throw new Error(`Missing component export: ${component.exportName}`);
       core.registerComponents(exported as Parameters<typeof core.registerComponents>[0]);
       mount.value?.append(document.createElement(component.name));

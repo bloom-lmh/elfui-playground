@@ -22,6 +22,7 @@ export interface PlaygroundFile {
 export interface CompiledPlaygroundFile {
   code: string;
   id: string;
+  name: string;
 }
 
 export interface CompileRequest {
