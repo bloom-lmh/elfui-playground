@@ -40,7 +40,7 @@
             {{ preset.title }}
           </button>
         </div>
-        <div class="file-panel-note">Files compile as project modules. Use relative imports such as <code>./Component2.elf</code>; select a file to preview it.</div>
+        <div class="file-panel-note">Files compile as project modules. Use relative imports such as <code>./Component2</code>; select a file to preview it.</div>
       </aside>
 
       <section class="editor-area">
@@ -104,7 +104,7 @@ type EncodedState = {
 
 const initialFile = (source = playgroundPresets[0].source): PlaygroundFile => ({
   id: "app",
-  name: "App.elf.ts",
+  name: "App.ts",
   source
 });
 
@@ -215,7 +215,7 @@ const openFile = (id: string) => {
 const createFile = () => {
   const number = files.value.length + 1;
   const id = `component-${Date.now()}`;
-  const name = `Component${number}.elf.ts`;
+  const name = `Component${number}.ts`;
   const component = `Component${number}`;
   const file: PlaygroundFile = {
     id,

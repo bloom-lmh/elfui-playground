@@ -10,8 +10,8 @@ entire workspace. Every file is compiled in a Worker; the selected file is run
 inside the isolated preview.
 
 Files run as separate browser ESM modules. Relative imports between project
-files resolve automatically, for example `import { Badge } from "./Badge.elf"`
-will resolve `Badge.elf.ts`. Cross-file language intelligence is planned for a
+files resolve automatically, for example `import { Badge } from "./Badge"`
+will resolve `Badge.ts`. Cross-file language intelligence is planned for a
 later workspace iteration.
 
 ## Development

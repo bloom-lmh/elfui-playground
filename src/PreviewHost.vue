@@ -52,7 +52,7 @@ const resolveProjectImport = (from: string, specifier: string, files: PreviewRun
     else normalized.push(part);
   }
   const path = normalized.join("/");
-  const candidates = [path, `${path}.ts`, `${path}.elf.ts`, `${path}/index.ts`, `${path}/index.elf.ts`];
+  const candidates = [path, `${path}.ts`, `${path}/index.ts`];
   return files.find((file) => candidates.includes(normalizePath(file.name)));
 };
 
