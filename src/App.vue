@@ -3,6 +3,7 @@
     <header class="topbar">
       <a class="brand" href="/" aria-label="ElfUI Playground home">ElfUI<span>Playground</span></a>
       <div class="topbar-actions">
+        <button type="button" class="quiet-button" @click="formatActiveFile">{{ formatLabel }}</button>
         <button type="button" class="quiet-button" @click="copyShareLink">{{ shareLabel }}</button>
         <button type="button" class="quiet-button" @click="exportProject">{{ exportLabel }}</button>
         <button type="button" class="quiet-button" @click="importInput?.click()">{{ importLabel }}</button>
@@ -216,6 +217,7 @@ const previewOrigin = ref("");
 const previewKey = ref(0);
 const statusKind = ref<"compiling" | "error" | "ready">("compiling");
 const shareLabel = ref("Copy link");
+const formatLabel = ref("Format");
 const exportLabel = ref("Export");
 const importLabel = ref("Import");
 const outputMode = ref<"preview" | "compiled">("preview");
@@ -628,6 +630,21 @@ const copyShareLink = async () => {
     shareLabel.value = "Link ready";
   }
   window.setTimeout(() => { shareLabel.value = "Copy link"; }, 1400);
+};
+
+const formatActiveFile = async () => {
+  const action = editor?.getAction("editor.action.formatDocument");
+  if (!action) {
+    fileActionError.value = "The TypeScript formatter is not ready yet.";
+    return;
+  }
+  try {
+    await action.run();
+    formatLabel.value = "Formatted";
+    window.setTimeout(() => { formatLabel.value = "Format"; }, 1400);
+  } catch (error) {
+    fileActionError.value = error instanceof Error ? error.message : "Unable to format this file.";
+  }
 };
 
 const exportProject = () => {

@@ -22,6 +22,9 @@ The **Entry** selector is independent from the file being edited. Use it to
 choose the module that runs in the preview; the choice is retained in shared
 links and exported workspace files.
 
+Use **Format** to run Monaco's TypeScript document formatter on the active
+file. Normal edit/compile behavior resumes immediately after formatting.
+
 The browser preview supports the stable `@elfui/core` application API and the
 standalone `@elfui/reactivity` primitives. Both are available to Monaco and to
 the isolated runtime without a bundler configuration.
